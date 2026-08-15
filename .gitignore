@@ -13,6 +13,7 @@ expo-env.d.ts
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
 *.p8
 *.p12
 *.key
@@ -30,13 +31,27 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# environment files and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
 
 # typescript
 *.tsbuildinfo
 
-example
+# test and tooling output
+coverage/
+.eslintcache
+.turbo/
+
+# downloaded ML artifacts
+/models/downloaded/
+/models/cache/
+*.ort.download
+*.onnx.download
+
+/example/
 
 # generated native folders
 /ios
