@@ -8,18 +8,20 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-import { useDeviceContactScan } from './use-device-contact-scan';
+import { useDeviceContactScanSession } from './use-device-contact-scan';
 
 export function DeviceContactScanScreen() {
   const theme = useTheme();
-  const { state, scan } = useDeviceContactScan();
-  const isScanning = state.status === 'scanning';
+  const router = useRouter();
+  const { state, scan, loadDemo } = useDeviceContactScanSession();
+  const isBusy = state.status === 'scanning' || state.status === 'backing-up';
   const isWeb = Platform.OS === 'web';
 
   return (
@@ -54,17 +56,162 @@ export function DeviceContactScanScreen() {
               </View>
             </ThemedView>
 
-            {state.status === 'success' && (
-              <View style={[styles.resultCard, { borderColor: theme.success }]}>
-                <ThemedText style={[styles.resultCount, { color: theme.success }]}>
-                  {state.snapshot.contacts.length}
-                </ThemedText>
+            {state.status === 'backing-up' && (
+              <ThemedView type="backgroundElement" style={styles.backupProgressCard}>
+                <ActivityIndicator color={theme.primary} />
                 <View style={styles.resultCopy}>
-                  <ThemedText type="smallBold">Contacts imported</ThemedText>
+                  <ThemedText type="smallBold">
+                    {state.phase === 'encrypting' ? 'Encrypting backup' : 'Verifying backup'}
+                  </ThemedText>
                   <ThemedText type="small" themeColor="textSecondary">
-                    Ready for local analysis. No changes have been made.
+                    {state.completedContacts} of {state.totalContacts} contacts
                   </ThemedText>
                 </View>
+              </ThemedView>
+            )}
+
+            {state.status === 'success' && (
+              <View style={styles.resultsSection}>
+                <View style={[styles.resultCard, { borderColor: theme.success }]}>
+                  <ThemedText style={[styles.resultCount, { color: theme.success }]}>
+                    {state.snapshot.contacts.length}
+                  </ThemedText>
+                  <View style={styles.resultCopy}>
+                    <ThemedText type="smallBold">Contacts imported</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {state.mode === 'demo'
+                        ? 'Synthetic demo data loaded. Your real contacts were not used.'
+                        : 'Encrypted backup verified. No changes have been made.'}
+                    </ThemedText>
+                  </View>
+                </View>
+
+                <ThemedView type="backgroundElement" style={styles.analysisCard}>
+                  <View style={styles.analysisHeader}>
+                    <View>
+                      <ThemedText type="smallBold">Potential duplicate pairs</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Exact phone and email matches
+                      </ThemedText>
+                    </View>
+                    <ThemedText style={[styles.analysisCount, { color: theme.primary }]}>
+                      {state.analysis.matches.length}
+                    </ThemedText>
+                  </View>
+
+                  <View style={styles.analysisBreakdown}>
+                    <View style={styles.analysisMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Phone
+                      </ThemedText>
+                      <ThemedText type="smallBold">{state.analysis.phoneMatchCount}</ThemedText>
+                    </View>
+                    <View style={styles.analysisMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Email
+                      </ThemedText>
+                      <ThemedText type="smallBold">{state.analysis.emailMatchCount}</ThemedText>
+                    </View>
+                    <View style={styles.analysisMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Contacts
+                      </ThemedText>
+                      <ThemedText type="smallBold">
+                        {state.analysis.affectedContactIds.length}
+                      </ThemedText>
+                    </View>
+                  </View>
+
+                  {state.analysis.matches.length === 0 && (
+                    <ThemedText type="small" themeColor="textSecondary">
+                      No exact duplicates found. Use the demo data below to test the review flow.
+                    </ThemedText>
+                  )}
+
+                  {state.analysis.matches.length + state.quality.updateCount + state.quality.deleteCandidateCount > 0 && (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => router.push('/review')}
+                      style={[styles.reviewButton, { backgroundColor: theme.primary }]}>
+                      <ThemedText style={styles.buttonText}>Review suggested changes</ThemedText>
+                    </Pressable>
+                  )}
+                </ThemedView>
+
+                <ThemedView type="backgroundElement" style={styles.analysisCard}>
+                  <View style={styles.analysisHeader}>
+                    <View>
+                      <ThemedText type="smallBold">Contact quality</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Safe cleanup and incomplete-contact checks
+                      </ThemedText>
+                    </View>
+                    <ThemedText style={[styles.analysisCount, { color: theme.primary }]}>
+                      {state.quality.findings.length}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.analysisBreakdown}>
+                    <View style={styles.analysisMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">Updates</ThemedText>
+                      <ThemedText type="smallBold">{state.quality.updateCount}</ThemedText>
+                    </View>
+                    <View style={styles.analysisMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">Empty</ThemedText>
+                      <ThemedText type="smallBold">{state.quality.deleteCandidateCount}</ThemedText>
+                    </View>
+                    <View style={styles.analysisMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">Missing name</ThemedText>
+                      <ThemedText type="smallBold">{state.quality.missingNameCount}</ThemedText>
+                    </View>
+                  </View>
+                  {state.quality.findings.length === 0 && (
+                    <ThemedText type="small" themeColor="textSecondary">
+                      No safe quality improvements were found.
+                    </ThemedText>
+                  )}
+                </ThemedView>
+
+                <ThemedView type="backgroundElement" style={styles.analysisCard}>
+                  <View style={styles.analysisHeader}>
+                    <View style={styles.resultCopy}>
+                      <ThemedText type="smallBold">Changes since previous backup</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {state.delta.hasBaseline
+                          ? 'Every current contact, including new and updated records, was included in this scan.'
+                          : 'First tracked scan. All current contacts establish the baseline.'}
+                      </ThemedText>
+                    </View>
+                    <ThemedText style={[styles.analysisCount, { color: theme.primary }]}>
+                      {state.delta.beautificationContactIds.length}
+                    </ThemedText>
+                  </View>
+
+                  <View style={styles.deltaGrid}>
+                    <View style={styles.deltaMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">New</ThemedText>
+                      <ThemedText type="smallBold">{state.delta.addedContactIds.length}</ThemedText>
+                    </View>
+                    <View style={styles.deltaMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">Updated</ThemedText>
+                      <ThemedText type="smallBold">{state.delta.updatedContactIds.length}</ThemedText>
+                    </View>
+                    <View style={styles.deltaMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">Deleted</ThemedText>
+                      <ThemedText type="smallBold">{state.delta.deletedContactIds.length}</ThemedText>
+                    </View>
+                    <View style={styles.deltaMetric}>
+                      <ThemedText type="small" themeColor="textSecondary">Unchanged</ThemedText>
+                      <ThemedText type="smallBold">{state.delta.unchangedContactIds.length}</ThemedText>
+                    </View>
+                  </View>
+
+                  {state.delta.unavailableContactIds.length > 0 && (
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {state.delta.unavailableContactIds.length} previous contacts are unavailable
+                      under limited access and are not treated as deleted.
+                    </ThemedText>
+                  )}
+                </ThemedView>
               </View>
             )}
 
@@ -93,18 +240,28 @@ export function DeviceContactScanScreen() {
               </View>
             )}
 
+            {state.status === 'backup-error' && (
+              <View style={[styles.messageCard, { borderColor: theme.danger }]}>
+                <ThemedText type="smallBold">A verified backup could not be created</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Analysis was stopped and your contacts were not changed. Check available storage
+                  and try again.
+                </ThemedText>
+              </View>
+            )}
+
             <View style={styles.actionArea}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Scan device contacts"
-                disabled={isScanning || isWeb}
+                disabled={isBusy || isWeb}
                 onPress={() => void scan()}
                 style={({ pressed }) => [
                   styles.primaryButton,
                   { backgroundColor: theme.primary },
-                  (pressed || isScanning || isWeb) && styles.buttonMuted,
+                  (pressed || isBusy || isWeb) && styles.buttonMuted,
                 ]}>
-                {isScanning ? (
+                {isBusy ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <ThemedText style={styles.buttonText}>
@@ -118,6 +275,21 @@ export function DeviceContactScanScreen() {
                   ? 'Device contact scanning is available on iOS and Android.'
                   : 'You choose which suggested changes to apply.'}
               </ThemedText>
+              {!isWeb && (
+                <Pressable onPress={() => router.push('/backups')} style={styles.backupsButton}>
+                  <ThemedText type="smallBold" style={{ color: theme.primary }}>
+                    View verified backups
+                  </ThemedText>
+                </Pressable>
+              )}
+              <Pressable
+                accessibilityRole="button"
+                onPress={loadDemo}
+                style={[styles.demoButton, { borderColor: theme.primary }]}>
+                <ThemedText type="smallBold" style={{ color: theme.primary }}>
+                  Try review flow with demo data
+                </ThemedText>
+              </Pressable>
             </View>
           </View>
         </ScrollView>
@@ -157,6 +329,13 @@ const styles = StyleSheet.create({
   },
   privacyDot: { width: 10, height: 10, borderRadius: 5, marginTop: 5 },
   privacyCopy: { flex: 1, gap: Spacing.one },
+  backupProgressCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+  },
   resultCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -167,6 +346,37 @@ const styles = StyleSheet.create({
   },
   resultCount: { minWidth: 54, fontSize: 32, lineHeight: 38, fontWeight: '800' },
   resultCopy: { flex: 1, gap: Spacing.one },
+  resultsSection: { gap: Spacing.three },
+  analysisCard: { gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
+  analysisHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  analysisCount: { fontSize: 32, lineHeight: 38, fontWeight: '800' },
+  analysisBreakdown: { flexDirection: 'row', gap: Spacing.two },
+  analysisMetric: {
+    flex: 1,
+    gap: Spacing.half,
+    padding: Spacing.two,
+    borderRadius: Spacing.two,
+  },
+  deltaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  deltaMetric: {
+    minWidth: 112,
+    flexGrow: 1,
+    gap: Spacing.half,
+    padding: Spacing.two,
+    borderRadius: Spacing.two,
+  },
+  reviewButton: {
+    minHeight: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.three,
+  },
   messageCard: {
     gap: Spacing.two,
     borderLeftWidth: 3,
@@ -184,4 +394,13 @@ const styles = StyleSheet.create({
   buttonMuted: { opacity: 0.58 },
   buttonText: { color: '#FFFFFF', fontSize: 17, lineHeight: 22, fontWeight: '700' },
   actionHint: { textAlign: 'center' },
+  backupsButton: { alignItems: 'center', paddingVertical: Spacing.two },
+  demoButton: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.three,
+  },
 });

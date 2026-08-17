@@ -45,6 +45,9 @@ export class ExpoDeviceContactReader implements ContactReader {
     }
 
     const contacts = await this.api.getAllDetails();
-    return { contacts: contacts.map((contact) => mapExpoContact(contact, source)) };
+    return {
+      contacts: contacts.map((contact) => mapExpoContact(contact, source)),
+      accessScope: permission.accessPrivileges === 'limited' ? 'limited' : 'all',
+    };
   }
 }

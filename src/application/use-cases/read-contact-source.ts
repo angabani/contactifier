@@ -27,6 +27,7 @@ export class ReadContactSource {
       id: this.dependencies.idGenerator.nextId(),
       schemaVersion: 1,
       source: request.source,
+      ...(result.accessScope ? { accessScope: result.accessScope } : {}),
       createdAt: this.dependencies.clock.now().toISOString(),
       sourceRevision: result.sourceRevision,
       contentHash: result.contentHash,

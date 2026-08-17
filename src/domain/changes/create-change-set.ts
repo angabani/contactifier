@@ -5,10 +5,22 @@ function validateChange(change: ProposedChange): void {
   assertDomain(change.id.trim().length > 0, 'Proposed change id is required.');
   assertDomain(change.reasons.length > 0, `Change ${change.id} must include a reason.`);
 
+  if (change.kind === 'delete') {
+    assertDomain(
+      change.before.id === change.contactId,
+      `Delete ${change.id} must reference its before-state contact id.`,
+    );
+    return;
+  }
+
   if (change.kind === 'update') {
     assertDomain(
       change.before.id === change.contactId && change.after.id === change.contactId,
       `Update ${change.id} must preserve its contact id.`,
+    );
+    assertDomain(
+      change.before.recordRef.sourceContactId === change.after.recordRef.sourceContactId,
+      `Update ${change.id} must preserve its source contact id.`,
     );
     return;
   }

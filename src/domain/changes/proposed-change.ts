@@ -21,6 +21,12 @@ export interface ContactUpdateChange extends ProposedChangeBase {
   readonly after: CanonicalContact;
 }
 
+export interface ContactDeleteChange extends ProposedChangeBase {
+  readonly kind: 'delete';
+  readonly contactId: ContactId;
+  readonly before: CanonicalContact;
+}
+
 export interface ContactMergeChange extends ProposedChangeBase {
   readonly kind: 'merge';
   readonly contactIds: readonly ContactId[];
@@ -28,7 +34,7 @@ export interface ContactMergeChange extends ProposedChangeBase {
   readonly after: CanonicalContact;
 }
 
-export type ProposedChange = ContactMergeChange | ContactUpdateChange;
+export type ProposedChange = ContactDeleteChange | ContactMergeChange | ContactUpdateChange;
 
 export interface ChangeSet {
   readonly id: string;
