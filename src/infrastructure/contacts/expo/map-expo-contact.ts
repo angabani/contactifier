@@ -63,7 +63,7 @@ export function mapExpoContact(
   return {
     id: canonicalId,
     recordRef: { source, sourceContactId: contact.id },
-    displayName: contact.fullName?.trim() || contact.company?.trim() || 'Unnamed contact',
+    displayName: contact.fullName?.trim() || contact.company?.trim() || '',
     ...(Object.keys(name).length > 0 ? { name } : {}),
     nicknames,
     phoneNumbers: (contact.phones ?? []).flatMap((item, index) =>
@@ -121,9 +121,9 @@ export function mapExpoContact(
     notes: [],
     groups: [],
     photos: contact.image
-      ? [{ uri: contact.image }]
+      ? [{ uri: contact.image, assetId: `${canonicalId}:photo:0` }]
       : contact.thumbnail
-        ? [{ uri: contact.thumbnail }]
+        ? [{ uri: contact.thumbnail, assetId: `${canonicalId}:photo:0` }]
         : [],
     extensions: {},
   };

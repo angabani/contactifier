@@ -12,7 +12,10 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 
 import type {
+  BackupPhotoMaterializationLease,
+  BackupPhotoMaterializer,
   CreateBackupOptions,
+  MaterializedBackupPhoto,
   VerifiedBackupStore,
 } from '@/application';
 import {
@@ -20,13 +23,18 @@ import {
   validateBackupManifest,
   type BackupChunk,
   type BackupManifest,
+  type BackupPhotoAsset,
   type CanonicalContact,
   type ContactSnapshot,
 } from '@/domain';
+import { isCurrentPhotoLease, photoLeaseName } from './photo-lease-retention';
 
 const BACKUP_DIRECTORY_NAME = 'contactifier-backups';
 const KEYCHAIN_SERVICE = 'contactifier.backup.keys';
 const MANIFEST_FILE_NAME = 'manifest.json';
+const PHOTO_LEASE_DIRECTORY_NAME = 'contactifier-photo-leases';
+const PHOTO_LEASE_SESSION_ID = randomUUID();
+let abandonedPhotoLeasesCleaned = false;
 
 interface PlaintextBackupChunk {
   readonly schemaVersion: 1;
@@ -44,19 +52,41 @@ async function sha256Bytes(bytes: Uint8Array): Promise<string> {
   return bytesToHex(new Uint8Array(await digest(CryptoDigestAlgorithm.SHA256, digestInput)));
 }
 
-function additionalData(backupId: string, index: number): Uint8Array {
+function chunkAdditionalData(backupId: string, index: number): Uint8Array {
   return new TextEncoder().encode(`contactifier-backup-v1:${backupId}:${index}`);
 }
 
-async function aggregateHash(chunks: readonly BackupChunk[]): Promise<string> {
+function photoAdditionalData(backupId: string, index: number): Uint8Array {
+  return new TextEncoder().encode(`contactifier-backup-photo-v1:${backupId}:${index}`);
+}
+
+async function aggregateHash(
+  chunks: readonly BackupChunk[],
+  photoAssets?: readonly BackupPhotoAsset[],
+): Promise<string> {
+  if (photoAssets === undefined) {
+    return digestStringAsync(
+      CryptoDigestAlgorithm.SHA256,
+      chunks
+        .map(
+          ({ index, fileName, contactCount, encryptedSizeInBytes, sha256 }) =>
+            `${index}:${fileName}:${contactCount}:${encryptedSizeInBytes}:${sha256}`,
+        )
+        .join('\n'),
+    );
+  }
   return digestStringAsync(
     CryptoDigestAlgorithm.SHA256,
-    chunks
-      .map(
+    [
+      ...chunks.map(
         ({ index, fileName, contactCount, encryptedSizeInBytes, sha256 }) =>
-          `${index}:${fileName}:${contactCount}:${encryptedSizeInBytes}:${sha256}`,
-      )
-      .join('\n'),
+          `chunk:${index}:${fileName}:${contactCount}:${encryptedSizeInBytes}:${sha256}`,
+      ),
+      ...photoAssets.map(
+        ({ index, assetId, contactId, photoIndex, fileName, plaintextSizeInBytes, encryptedSizeInBytes, plaintextSha256, sha256 }) =>
+          `photo:${index}:${assetId}:${contactId}:${photoIndex}:${fileName}:${plaintextSizeInBytes}:${encryptedSizeInBytes}:${plaintextSha256}:${sha256}`,
+      ),
+    ].join('\n'),
   );
 }
 
@@ -81,7 +111,25 @@ export class BackupIntegrityError extends Error {
   }
 }
 
-export class ExpoEncryptedBackupStore implements VerifiedBackupStore {
+export class ExpoEncryptedBackupStore implements VerifiedBackupStore, BackupPhotoMaterializer {
+  cleanupAbandonedPhotoLeases(): number {
+    const leaseRoot = new Directory(Paths.cache, PHOTO_LEASE_DIRECTORY_NAME);
+    if (!leaseRoot.exists) {
+      abandonedPhotoLeasesCleaned = true;
+      return 0;
+    }
+    let removed = 0;
+    for (const entry of leaseRoot.list()) {
+      if (entry instanceof Directory && isCurrentPhotoLease(entry.name, PHOTO_LEASE_SESSION_ID)) {
+        continue;
+      }
+      entry.delete();
+      removed += 1;
+    }
+    abandonedPhotoLeasesCleaned = true;
+    return removed;
+  }
+
   async listVerifiedBackups(): Promise<readonly BackupManifest[]> {
     const backupRoot = new Directory(Paths.document, BACKUP_DIRECTORY_NAME);
     if (!backupRoot.exists) return [];
@@ -141,7 +189,7 @@ export class ExpoEncryptedBackupStore implements VerifiedBackupStore {
         };
         const plaintextBytes = new TextEncoder().encode(JSON.stringify(plaintext));
         const sealed = await aesEncryptAsync(plaintextBytes, encryptionKey, {
-          additionalData: additionalData(backupId, index),
+          additionalData: chunkAdditionalData(backupId, index),
         });
         const encryptedBytes = await sealed.combined();
         if (typeof encryptedBytes === 'string') {
@@ -167,6 +215,43 @@ export class ExpoEncryptedBackupStore implements VerifiedBackupStore {
         });
       }
 
+      const photoAssets: BackupPhotoAsset[] = [];
+      for (const contact of snapshot.contacts) {
+        for (const [photoIndex, photo] of contact.photos.entries()) {
+          const sourceFile = new File(photo.uri);
+          if (!sourceFile.exists) {
+            throw new BackupIntegrityError(`Photo ${photoIndex} for contact ${contact.id} is unavailable.`);
+          }
+          const plaintextBytes = await sourceFile.bytes();
+          if (plaintextBytes.byteLength === 0) {
+            throw new BackupIntegrityError(`Photo ${photoIndex} for contact ${contact.id} is empty.`);
+          }
+          const index = photoAssets.length;
+          const sealed = await aesEncryptAsync(plaintextBytes, encryptionKey, {
+            additionalData: photoAdditionalData(backupId, index),
+          });
+          const encryptedBytes = await sealed.combined();
+          if (typeof encryptedBytes === 'string') {
+            throw new BackupIntegrityError('Unexpected encrypted photo encoding.');
+          }
+          const fileName = `photo-${index.toString().padStart(6, '0')}.cfp`;
+          const file = new File(temporaryDirectory, fileName);
+          file.create();
+          file.write(encryptedBytes);
+          photoAssets.push({
+            index,
+            assetId: photo.assetId ?? `${contact.id}:${photoIndex}`,
+            contactId: contact.id,
+            photoIndex,
+            fileName,
+            plaintextSizeInBytes: plaintextBytes.byteLength,
+            encryptedSizeInBytes: encryptedBytes.byteLength,
+            plaintextSha256: await sha256Bytes(plaintextBytes),
+            sha256: await sha256Bytes(encryptedBytes),
+          });
+        }
+      }
+
       const manifest: BackupManifest = validateBackupManifest({
         id: backupId,
         schemaVersion: 1,
@@ -180,10 +265,13 @@ export class ExpoEncryptedBackupStore implements VerifiedBackupStore {
         contactCount: snapshot.contacts.length,
         chunkContactLimit: options.chunkContactLimit,
         chunks,
+        photoAssets,
         artifact: {
           uri: finalDirectory.uri,
-          sizeInBytes: chunks.reduce((sum, chunk) => sum + chunk.encryptedSizeInBytes, 0),
-          sha256: await aggregateHash(chunks),
+          sizeInBytes:
+            chunks.reduce((sum, chunk) => sum + chunk.encryptedSizeInBytes, 0) +
+            photoAssets.reduce((sum, asset) => sum + asset.encryptedSizeInBytes, 0),
+          sha256: await aggregateHash(chunks, photoAssets),
         },
         encryption: { algorithm: 'AES-256-GCM', keyAlias },
       });
@@ -211,12 +299,79 @@ export class ExpoEncryptedBackupStore implements VerifiedBackupStore {
     const encryptionKey = await AESEncryptionKey.import(keyHex, 'hex');
     const directory = new Directory(manifest.artifact.uri);
     if (!directory.exists) throw new BackupIntegrityError('The backup directory is missing.');
-    if ((await aggregateHash(manifest.chunks)) !== manifest.artifact.sha256) {
+    if ((await aggregateHash(manifest.chunks, manifest.photoAssets)) !== manifest.artifact.sha256) {
       throw new BackupIntegrityError('The backup manifest hash is invalid.');
     }
 
     for (const chunk of manifest.chunks) {
       yield await this.readChunk(directory, manifest.id, chunk, encryptionKey);
+    }
+  }
+
+  async materialize(
+    manifest: BackupManifest,
+    assetIds: readonly string[],
+  ): Promise<BackupPhotoMaterializationLease> {
+    if (!abandonedPhotoLeasesCleaned) this.cleanupAbandonedPhotoLeases();
+    validateBackupManifest(manifest);
+    const requestedIds = new Set(assetIds);
+    if (requestedIds.size !== assetIds.length) {
+      throw new BackupIntegrityError('Photo materialization request contains duplicate asset ids.');
+    }
+    const assetsById = new Map(
+      (manifest.photoAssets ?? []).map((asset) => [asset.assetId, asset]),
+    );
+    const assets = assetIds.map((assetId) => {
+      const asset = assetsById.get(assetId);
+      if (!asset) throw new BackupIntegrityError(`Backup photo asset ${assetId} is unavailable.`);
+      return asset;
+    });
+    const keyHex = await SecureStore.getItemAsync(manifest.encryption.keyAlias, keyOptions());
+    if (!keyHex) throw new BackupKeyUnavailableError();
+    const encryptionKey = await AESEncryptionKey.import(keyHex, 'hex');
+    const backupDirectory = new Directory(manifest.artifact.uri);
+    if (!backupDirectory.exists) throw new BackupIntegrityError('The backup directory is missing.');
+    if ((await aggregateHash(manifest.chunks, manifest.photoAssets)) !== manifest.artifact.sha256) {
+      throw new BackupIntegrityError('The backup manifest hash is invalid.');
+    }
+
+    const leaseRoot = new Directory(Paths.cache, PHOTO_LEASE_DIRECTORY_NAME);
+    leaseRoot.create({ intermediates: true, idempotent: true });
+    const leaseDirectory = new Directory(
+      leaseRoot,
+      photoLeaseName(PHOTO_LEASE_SESSION_ID, manifest.id, randomUUID()),
+    );
+    leaseDirectory.create();
+    try {
+      const photos: MaterializedBackupPhoto[] = [];
+      for (const asset of assets) {
+        const bytes = await this.readPhoto(
+          backupDirectory,
+          manifest.id,
+          asset,
+          encryptionKey,
+        );
+        const file = new File(leaseDirectory, `photo-${asset.index.toString().padStart(6, '0')}`);
+        file.create();
+        file.write(bytes);
+        photos.push({
+          assetId: asset.assetId,
+          uri: file.uri,
+          plaintextSha256: asset.plaintextSha256,
+        });
+      }
+      let released = false;
+      return {
+        photos: Object.freeze(photos),
+        release: () => {
+          if (!released && leaseDirectory.exists) leaseDirectory.delete();
+          released = true;
+          return Promise.resolve();
+        },
+      };
+    } catch (error) {
+      if (leaseDirectory.exists) leaseDirectory.delete();
+      throw error;
     }
   }
 
@@ -235,6 +390,9 @@ export class ExpoEncryptedBackupStore implements VerifiedBackupStore {
         completedContacts: verifiedContacts,
         totalContacts: manifest.contactCount,
       });
+    }
+    for (const asset of manifest.photoAssets ?? []) {
+      await this.readPhoto(directory, manifest.id, asset, encryptionKey);
     }
     if (verifiedContacts !== manifest.contactCount) throw new BackupIntegrityError();
   }
@@ -257,7 +415,7 @@ export class ExpoEncryptedBackupStore implements VerifiedBackupStore {
 
     const sealed = AESSealedData.fromCombined(encryptedBytes);
     const decrypted = await aesDecryptAsync(sealed, encryptionKey, {
-      additionalData: additionalData(backupId, chunk.index),
+      additionalData: chunkAdditionalData(backupId, chunk.index),
       output: 'bytes',
     });
     if (typeof decrypted === 'string') throw new BackupIntegrityError();
@@ -271,5 +429,34 @@ export class ExpoEncryptedBackupStore implements VerifiedBackupStore {
       throw new BackupIntegrityError(`Backup chunk ${chunk.index} metadata is invalid.`);
     }
     return payload.contacts;
+  }
+
+  private async readPhoto(
+    directory: Directory,
+    backupId: string,
+    asset: BackupPhotoAsset,
+    encryptionKey: Awaited<ReturnType<typeof AESEncryptionKey.generate>>,
+  ): Promise<Uint8Array> {
+    const file = new File(directory, asset.fileName);
+    if (!file.exists) throw new BackupIntegrityError(`Backup photo ${asset.index} is missing.`);
+    const encryptedBytes = await file.bytes();
+    if (
+      encryptedBytes.byteLength !== asset.encryptedSizeInBytes ||
+      (await sha256Bytes(encryptedBytes)) !== asset.sha256
+    ) {
+      throw new BackupIntegrityError(`Backup photo ${asset.index} is corrupt.`);
+    }
+    const decrypted = await aesDecryptAsync(AESSealedData.fromCombined(encryptedBytes), encryptionKey, {
+      additionalData: photoAdditionalData(backupId, asset.index),
+      output: 'bytes',
+    });
+    if (
+      typeof decrypted === 'string' ||
+      decrypted.byteLength !== asset.plaintextSizeInBytes ||
+      (await sha256Bytes(decrypted)) !== asset.plaintextSha256
+    ) {
+      throw new BackupIntegrityError(`Backup photo ${asset.index} plaintext is corrupt.`);
+    }
+    return decrypted;
   }
 }

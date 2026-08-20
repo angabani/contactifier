@@ -19,6 +19,18 @@ export interface BackupChunk {
   readonly sha256: string;
 }
 
+export interface BackupPhotoAsset {
+  readonly index: number;
+  readonly assetId: string;
+  readonly contactId: string;
+  readonly photoIndex: number;
+  readonly fileName: string;
+  readonly plaintextSizeInBytes: number;
+  readonly encryptedSizeInBytes: number;
+  readonly plaintextSha256: string;
+  readonly sha256: string;
+}
+
 export interface BackupEncryption {
   readonly algorithm: 'AES-256-GCM';
   readonly keyAlias: string;
@@ -38,6 +50,7 @@ export interface BackupManifest {
   readonly contactCount: number;
   readonly chunkContactLimit: number;
   readonly chunks: readonly BackupChunk[];
+  readonly photoAssets?: readonly BackupPhotoAsset[];
   readonly artifact: BackupArtifact;
   readonly encryption: BackupEncryption;
 }

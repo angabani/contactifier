@@ -80,6 +80,23 @@ describe('domain validation', () => {
     ).toThrow('different source');
   });
 
+  it('rejects duplicate native source contact identities', () => {
+    const first = contact('one');
+    const second = {
+      ...contact('two'),
+      recordRef: { source: deviceSource, sourceContactId: first.recordRef.sourceContactId },
+    };
+    expect(() =>
+      createContactSnapshot({
+        id: 'snapshot-1',
+        schemaVersion: 1,
+        source: deviceSource,
+        createdAt: '2026-08-15T00:00:00.000Z',
+        contacts: [first, second],
+      }),
+    ).toThrow('duplicate source contact id');
+  });
+
   it('rejects an update that changes the contact identity', () => {
     expect(() =>
       createChangeSet({
@@ -124,5 +141,28 @@ describe('domain validation', () => {
         ],
       }),
     ).toThrow('at least two distinct contacts');
+  });
+
+  it('rejects a merge with duplicate before-state contacts', () => {
+    expect(() =>
+      createChangeSet({
+        id: 'changes-1',
+        snapshotId: 'snapshot-1',
+        createdAt: '2026-08-15T00:00:00.000Z',
+        changes: [
+          {
+            id: 'merge-1',
+            kind: 'merge',
+            origin: 'rule',
+            confidence: createConfidenceScore(0.8),
+            reasons: ['Same verified phone number'],
+            decision: 'pending',
+            contactIds: ['one', 'two'],
+            before: [contact('one'), contact('one')],
+            after: contact('one'),
+          },
+        ],
+      }),
+    ).toThrow('before-state for every contact');
   });
 });

@@ -1,4 +1,9 @@
-import { createContactSnapshot, type CanonicalContact, type ContactValue } from '@/domain';
+import {
+  createContactSnapshot,
+  type BackupManifest,
+  type CanonicalContact,
+  type ContactValue,
+} from '@/domain';
 
 const source = { kind: 'device' as const, containerId: 'contactifier-demo' };
 
@@ -110,4 +115,29 @@ export function createDemoPreviousContactSnapshot() {
       }),
     ],
   });
+}
+
+export function createDemoBackupManifest(): BackupManifest {
+  const snapshot = createDemoContactSnapshot();
+  return {
+    id: 'contactifier-demo-backup',
+    schemaVersion: 1,
+    snapshotId: snapshot.id,
+    snapshotCreatedAt: snapshot.createdAt,
+    source: snapshot.source,
+    createdAt: snapshot.createdAt,
+    contactCount: snapshot.contacts.length,
+    chunkContactLimit: 100,
+    chunks: [
+      {
+        index: 0,
+        fileName: 'chunk-000000.cfb',
+        contactCount: snapshot.contacts.length,
+        encryptedSizeInBytes: 1,
+        sha256: '0'.repeat(64),
+      },
+    ],
+    artifact: { uri: 'demo://contactifier', sizeInBytes: 1, sha256: '0'.repeat(64) },
+    encryption: { algorithm: 'AES-256-GCM', keyAlias: 'demo-only' },
+  };
 }

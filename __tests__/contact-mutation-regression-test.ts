@@ -211,10 +211,6 @@ describe('contact mutation regression contract', () => {
     ['stale before-state', () => applyAcceptedChangeSet(snapshot([contact('alpha', 'Changed Elsewhere')]), changes([update(alpha, 'New')])), 'stale-contact'],
     ['overlapping changes', () => applyAcceptedChangeSet(snapshot([alpha]), changes([update(alpha, 'New'), remove(alpha)])), 'contact-overlap'],
     ['existing merge target', () => applyAcceptedChangeSet(snapshot([alpha, beta, gamma]), changes([merge([alpha, beta], gamma)])), 'target-collision'],
-    ['foreign output source', () => {
-      const foreign = { ...alpha, recordRef: { source: { kind: 'google' as const, accountId: 'g' }, sourceContactId: 'alpha' } };
-      applyAcceptedChangeSet(snapshot([alpha]), changes([{ ...update(alpha, 'New'), after: foreign }]));
-    }, 'source-mismatch'],
   ];
 
   it.each(errorCases)('rejects %s atomically', (_label, operation, code) => {
@@ -236,5 +232,15 @@ describe('contact mutation regression contract', () => {
   it('rejects malformed delete and identity-changing update fixtures', () => {
     expect(() => changes([{ ...remove(alpha), contactId: 'beta' }])).toThrow(DomainValidationError);
     expect(() => changes([{ ...update(alpha, 'New'), after: { ...contact('alpha'), recordRef: { source, sourceContactId: 'other' } } }])).toThrow(DomainValidationError);
+    const foreign = {
+      ...alpha,
+      recordRef: {
+        source: { kind: 'google' as const, accountId: 'g' },
+        sourceContactId: 'alpha',
+      },
+    };
+    expect(() => changes([{ ...update(alpha, 'New'), after: foreign }])).toThrow(
+      DomainValidationError,
+    );
   });
 });

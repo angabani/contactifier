@@ -4,6 +4,7 @@ export type {
   BackupEncryption,
   BackupId,
   BackupManifest,
+  BackupPhotoAsset,
 } from './backups/backup-manifest';
 export { chunkContacts } from './backups/chunk-contacts';
 export { validateBackupManifest } from './backups/validate-backup-manifest';
@@ -34,6 +35,18 @@ export {
   ChangeApplicationError,
   rollbackAppliedChangeSet,
 } from './changes/apply-change-set';
+export {
+  compensationsForExecutedOperations,
+  ContactWritePlanError,
+  createDryRunContactWritePlan,
+  validateContactWritePlan,
+} from './changes/contact-write-plan';
+export type {
+  ContactWriteCompensation,
+  ContactWriteOperation,
+  ContactWritePlan,
+  ContactWritePlanErrorCode,
+} from './changes/contact-write-plan';
 export type {
   AppliedChangeSet,
   AppliedMutationReceipt,
@@ -73,6 +86,7 @@ export type {
 } from './merging/merge-candidate';
 export {
   analyzeExactDuplicates,
+  DEFAULT_EXACT_DUPLICATE_MATCH_LIMIT,
   normalizeEmailForExactMatch,
   normalizePhoneForExactMatch,
 } from './merging/exact-duplicate-analysis';
@@ -92,3 +106,25 @@ export type {
 } from './quality/contact-quality-analysis';
 export { assertDomain, DomainValidationError } from './shared/invariant';
 export type { JsonObject, JsonPrimitive, JsonValue } from './shared/json';
+export {
+  CleanupWorkflowTransitionError,
+  createCleanupWorkflow,
+  recordWorkflowPreflight,
+  recordWorkflowOperation,
+  recordWorkflowCompensation,
+  recordWorkflowFinalization,
+  recordWorkflowReconciliation,
+  recordWorkflowReview,
+  transitionCleanupWorkflow,
+  validateCleanupWorkflow,
+  workflowUsesSource,
+} from './workflows/cleanup-workflow';
+export type {
+  CleanupWorkflow,
+  CleanupWorkflowFailure,
+  CleanupWorkflowJournalEntry,
+  ContactWriteReceipt,
+  ContactWriteCompensationReceipt,
+  ContactWriteFinalizationReceipt,
+  CleanupWorkflowPhase,
+} from './workflows/cleanup-workflow';

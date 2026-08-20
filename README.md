@@ -1,56 +1,82 @@
-# Welcome to your Expo app 👋
+# Contactifier
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Contactifier is a privacy-first Expo and React Native application for reviewing, backing up, and
+beautifying contact directories. Contact-derived data stays on the device. Native contact writes
+are intentionally disabled while the write adapter and post-write verification contract are under
+development.
 
-## Get started
+## Requirements
 
-1. Install dependencies
+- Node.js 22.13.x
+- npm
+- Xcode for iOS development or Android Studio for Android development
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Development
 
 ```bash
-npm run reset-project
+npm ci
+npm run ios
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Use `npm start` when an existing development build or Expo Go session is sufficient. Device
+contact scanning is available only on iOS and Android.
 
-### Other setup steps
+## Quality checks
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+npm run check
+```
 
-## Learn more
+The same lint, TypeScript, and regression checks run on every GitHub push and pull request.
 
-To learn more about developing your project with Expo, look at the following resources:
+## Architecture
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+The application follows feature-first ports and adapters with inward-pointing dependencies:
 
-## Join the community
+```text
+routes -> features -> application -> domain
+                          ^
+                          |
+                    infrastructure
+```
 
-Join our community of developers creating universal apps.
+- `src/domain`: immutable contact contracts and pure analysis/planning rules
+- `src/application`: use cases and infrastructure-independent ports
+- `src/infrastructure`: Expo contact and encrypted-backup adapters
+- `src/composition`: production dependency wiring
+- `src/features`: screens and interaction state
+- `src/app`: Expo Router route entries
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Layer boundaries are enforced by ESLint. See `docs/architecture.md` for safety invariants and
+backup/write planning details.
+
+## Implemented safety flow
+
+1. Read contacts into an immutable canonical snapshot.
+2. Compare with the latest matching verified backup.
+3. Create and verify a chunked AES-256-GCM backup.
+4. Analyze exact duplicates and conservative quality issues.
+5. Require an explicit decision for every proposed change.
+6. Re-read targeted contacts and produce a dry-run write plan.
+7. Persist encrypted, revision-checked workflow checkpoints and a receipt-backed operation/rollback journal.
+8. Resume unfinished reviews only from their exact verified backup after an app restart.
+9. Retain only two encrypted revisions per workflow to bound checkpoint storage.
+10. Allow confirmed, revision-safe deletion of review progress without deleting its backup.
+11. Exercise write-ahead journaling, verification, and rollback through a failure-injectable simulator.
+12. Reconcile interrupted writes as applied, not applied, or manual-review-required before rollback.
+13. Certify every writer against one shared create/update/delete/reconcile/compensate contract.
+14. Require short-lived, workflow-bound capability authorization at the execution boundary.
+15. Keep the production native-writer certification registry empty until integration is complete.
+16. Reconcile interrupted iOS creates through a unique persisted native marker, never fuzzy matching.
+17. Remove create markers through a journaled, idempotent, separately authorized finalization phase.
+18. Encrypt and verify photo bytes separately, blocking writes when photo coverage is incomplete.
+19. Materialize authenticated photos through scoped private leases for create and rollback recreation.
+20. Remove abandoned photo leases at startup without touching current-process writes.
+21. Gate the iOS certification checklist to physical-device development builds and real verified backups.
+
+An Expo SDK 57 iOS writer candidate exists for mapping and mocked integration testing only. Its
+certification remains disabled, it is not registered in production composition, and the UI cannot
+invoke it.
+
+Synthetic demo data is available in the app to exercise merge, update, delete, delta, review, and
+dry-run behavior without reading or changing real contacts.

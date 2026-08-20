@@ -59,6 +59,7 @@ export interface ContactEvent {
 export interface ContactPhotoRef {
   readonly uri: string;
   readonly hash?: string;
+  readonly assetId?: string;
 }
 
 export interface CanonicalContact {

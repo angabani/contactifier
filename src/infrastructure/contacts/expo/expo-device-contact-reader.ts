@@ -5,7 +5,11 @@ import {
   type ContactsPermissionResponse,
 } from 'expo-contacts';
 
-import type { ContactReader, ContactReadResult } from '@/application';
+import {
+  ContactPermissionDeniedError,
+  type ContactReader,
+  type ContactReadResult,
+} from '@/application';
 import { assertDomain, type ContactSourceRef } from '@/domain';
 
 import { DEVICE_CONTACT_FIELDS } from './device-contact-fields';
@@ -14,21 +18,19 @@ import { mapExpoContact, type ExpoContactDetails } from './map-expo-contact';
 export interface DeviceContactsApi {
   getPermissions(): Promise<ContactsPermissionResponse>;
   requestPermissions(): Promise<ContactsPermissionResponse>;
-  getAllDetails(): Promise<readonly ExpoContactDetails[]>;
+  getAllDetails(options: {
+    readonly limit: number;
+    readonly offset: number;
+  }): Promise<readonly ExpoContactDetails[]>;
 }
+
+const CONTACT_READ_BATCH_SIZE = 500;
 
 const expoContactsApi: DeviceContactsApi = {
   getPermissions: getPermissionsAsync,
   requestPermissions: requestPermissionsAsync,
-  getAllDetails: () => Contact.getAllDetails(DEVICE_CONTACT_FIELDS),
+  getAllDetails: (options) => Contact.getAllDetails(DEVICE_CONTACT_FIELDS, options),
 };
-
-export class ContactPermissionDeniedError extends Error {
-  constructor(readonly canAskAgain: boolean) {
-    super('Permission to read device contacts was denied.');
-    this.name = 'ContactPermissionDeniedError';
-  }
-}
 
 export class ExpoDeviceContactReader implements ContactReader {
   constructor(private readonly api: DeviceContactsApi = expoContactsApi) {}
@@ -44,7 +46,17 @@ export class ExpoDeviceContactReader implements ContactReader {
       throw new ContactPermissionDeniedError(permission.canAskAgain);
     }
 
-    const contacts = await this.api.getAllDetails();
+    const contacts: ExpoContactDetails[] = [];
+    let offset = 0;
+    while (true) {
+      const batch = await this.api.getAllDetails({
+        limit: CONTACT_READ_BATCH_SIZE,
+        offset,
+      });
+      contacts.push(...batch);
+      if (batch.length < CONTACT_READ_BATCH_SIZE) break;
+      offset += batch.length;
+    }
     return {
       contacts: contacts.map((contact) => mapExpoContact(contact, source)),
       accessScope: permission.accessPrivileges === 'limited' ? 'limited' : 'all',

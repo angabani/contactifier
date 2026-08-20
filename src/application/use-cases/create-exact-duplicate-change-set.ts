@@ -8,9 +8,7 @@ import {
   type ContactSnapshot,
   type ContactValue,
   type ExactDuplicateAnalysis,
-  type JsonValue,
   type ProposedChange,
-  type StructuredName,
 } from '@/domain';
 
 export interface CreateExactDuplicateChangeSetInput {
@@ -19,38 +17,53 @@ export interface CreateExactDuplicateChangeSetInput {
   readonly createdAt: string;
 }
 
-function connectedGroups(analysis: ExactDuplicateAnalysis): readonly (readonly string[])[] {
-  const neighbors = new Map<string, Set<string>>();
-  for (const { contactIds } of analysis.matches) {
-    const [left, right] = contactIds;
-    const leftNeighbors = neighbors.get(left) ?? new Set<string>();
-    const rightNeighbors = neighbors.get(right) ?? new Set<string>();
-    leftNeighbors.add(right);
-    rightNeighbors.add(left);
-    neighbors.set(left, leftNeighbors);
-    neighbors.set(right, rightNeighbors);
+const MAX_CONTACTS_PER_MERGE_PROPOSAL = 10;
+
+function nonOverlappingExactGroups(
+  analysis: ExactDuplicateAnalysis,
+): readonly (readonly string[])[] {
+  const contactsBySignal = new Map<string, Set<string>>();
+  for (const match of analysis.matches) {
+    for (const signal of match.signals) {
+      const key = `${signal.kind}:${signal.normalizedValue}`;
+      const contacts = contactsBySignal.get(key) ?? new Set<string>();
+      match.contactIds.forEach((contactId) => contacts.add(contactId));
+      contactsBySignal.set(key, contacts);
+    }
   }
 
-  const visited = new Set<string>();
-  const groups: string[][] = [];
-  for (const start of [...neighbors.keys()].sort()) {
-    if (visited.has(start)) continue;
-    const pending = [start];
-    const group: string[] = [];
-    visited.add(start);
-    while (pending.length > 0) {
-      const current = pending.pop()!;
-      group.push(current);
-      for (const neighbor of [...(neighbors.get(current) ?? [])].sort().reverse()) {
-        if (!visited.has(neighbor)) {
-          visited.add(neighbor);
-          pending.push(neighbor);
-        }
-      }
+  const evidenceByMembership = new Map<string, { contactIds: string[]; evidenceCount: number }>();
+  for (const contacts of contactsBySignal.values()) {
+    const allContactIds = [...contacts].sort();
+    for (
+      let start = 0;
+      start < allContactIds.length;
+      start += MAX_CONTACTS_PER_MERGE_PROPOSAL
+    ) {
+      const contactIds = allContactIds.slice(start, start + MAX_CONTACTS_PER_MERGE_PROPOSAL);
+      if (contactIds.length < 2) continue;
+      const membership = contactIds.join('\u0000');
+      const candidate = evidenceByMembership.get(membership) ?? { contactIds, evidenceCount: 0 };
+      candidate.evidenceCount += 1;
+      evidenceByMembership.set(membership, candidate);
     }
-    groups.push(group.sort());
   }
-  return groups;
+
+  const touched = new Set<string>();
+  const selected: string[][] = [];
+  for (const { contactIds } of [...evidenceByMembership.values()].sort(
+    (left, right) =>
+      right.evidenceCount - left.evidenceCount ||
+      right.contactIds.length - left.contactIds.length ||
+      left.contactIds.join('\u0000').localeCompare(right.contactIds.join('\u0000')),
+  )) {
+    if (contactIds.some((contactId) => touched.has(contactId))) continue;
+    contactIds.forEach((contactId) => touched.add(contactId));
+    selected.push(contactIds);
+  }
+  return selected.sort((left, right) =>
+    left.join('\u0000').localeCompare(right.join('\u0000')),
+  );
 }
 
 function uniqueValues<T>(
@@ -69,34 +82,25 @@ function uniqueValues<T>(
   );
 }
 
-function combinedName(contacts: readonly CanonicalContact[]): StructuredName | undefined {
-  const names = contacts.flatMap(({ name }) => (name ? [name] : []));
-  if (names.length === 0) return undefined;
-  const fields: (keyof StructuredName)[] = [
-    'prefix',
-    'givenName',
-    'middleName',
-    'familyName',
-    'suffix',
-    'phoneticGivenName',
-    'phoneticMiddleName',
-    'phoneticFamilyName',
-  ];
-  return Object.fromEntries(
-    fields.flatMap((field) => {
-      const value = names.find((name) => name[field]?.trim())?.[field];
-      return value ? [[field, value]] : [];
-    }),
+function nameCompleteness(contact: CanonicalContact): number {
+  return contact.name
+    ? Object.values(contact.name).filter((value) => value?.trim()).length
+    : 0;
+}
+
+function preferredNamedContact(contacts: readonly CanonicalContact[]): CanonicalContact {
+  return contacts.reduce((preferred, contact) =>
+    nameCompleteness(contact) > nameCompleteness(preferred) ? contact : preferred,
   );
 }
 
 function mergeContacts(contacts: readonly CanonicalContact[]): CanonicalContact {
   const survivor = contacts[0];
+  const preferredName = preferredNamedContact(contacts);
   return {
     ...survivor,
-    displayName:
-      contacts.find(({ displayName }) => displayName.trim())?.displayName ?? survivor.id,
-    name: combinedName(contacts),
+    displayName: preferredName.displayName.trim() || survivor.displayName.trim(),
+    name: preferredName.name,
     nicknames: uniqueValues(contacts, ({ nicknames }) => nicknames),
     phoneNumbers: uniqueValues(
       contacts,
@@ -123,10 +127,7 @@ function mergeContacts(contacts: readonly CanonicalContact[]): CanonicalContact 
             (candidate) => candidate.uri === photo.uri && candidate.hash === photo.hash,
           ) === index,
       ),
-    extensions: contacts.reduce<Record<string, JsonValue>>(
-      (result, contact) => ({ ...result, ...contact.extensions }),
-      {},
-    ),
+    extensions: survivor.extensions,
   };
 }
 
@@ -136,7 +137,7 @@ export function createExactDuplicateChangeSet({
   createdAt,
 }: CreateExactDuplicateChangeSetInput): ChangeSet {
   const contactsById = new Map(snapshot.contacts.map((contact) => [contact.id, contact]));
-  const proposals: ProposedChange[] = connectedGroups(analysis).map((contactIds) => {
+  const proposals: ProposedChange[] = nonOverlappingExactGroups(analysis).map((contactIds) => {
     const before = contactIds.map((id) => {
       const contact = contactsById.get(id);
       if (!contact) throw new Error(`Duplicate analysis references missing contact ${id}.`);

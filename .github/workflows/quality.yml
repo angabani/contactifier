@@ -25,11 +25,5 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Lint
-        run: npm run lint
-
-      - name: Type-check
-        run: npx tsc --noEmit
-
-      - name: Run regression tests
-        run: npm run test:ci
+      - name: Run quality checks
+        run: npm run check

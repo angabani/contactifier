@@ -19,7 +19,11 @@ export interface ExactDuplicateAnalysis {
   readonly affectedContactIds: readonly ContactId[];
   readonly emailMatchCount: number;
   readonly phoneMatchCount: number;
+  readonly isTruncated: boolean;
+  readonly matchLimit: number;
 }
+
+export const DEFAULT_EXACT_DUPLICATE_MATCH_LIMIT = 2_000;
 
 export function normalizeEmailForExactMatch(value: string): string | null {
   const normalized = value.trim().toLocaleLowerCase('en-US');
@@ -41,16 +45,6 @@ export function normalizePhoneForExactMatch(value: PhoneNumber): string | null {
   return hasLeadingPlus ? `+${digits}` : digits;
 }
 
-function pairs(contactIds: readonly ContactId[]): readonly [ContactId, ContactId][] {
-  const result: [ContactId, ContactId][] = [];
-  for (let left = 0; left < contactIds.length; left += 1) {
-    for (let right = left + 1; right < contactIds.length; right += 1) {
-      result.push([contactIds[left], contactIds[right]]);
-    }
-  }
-  return result;
-}
-
 function indexValues(
   contacts: readonly CanonicalContact[],
   valuesForContact: (contact: CanonicalContact) => readonly string[],
@@ -66,8 +60,15 @@ function indexValues(
   return index;
 }
 
-export function analyzeExactDuplicates(snapshot: ContactSnapshot): ExactDuplicateAnalysis {
+export function analyzeExactDuplicates(
+  snapshot: ContactSnapshot,
+  matchLimit = DEFAULT_EXACT_DUPLICATE_MATCH_LIMIT,
+): ExactDuplicateAnalysis {
+  if (!Number.isSafeInteger(matchLimit) || matchLimit <= 0) {
+    throw new Error('Exact duplicate match limit must be a positive integer.');
+  }
   const pairSignals = new Map<string, { contactIds: [ContactId, ContactId]; signals: ExactDuplicateSignal[] }>();
+  let isTruncated = false;
 
   const indexes: readonly [ExactDuplicateSignalKind, Map<string, Set<ContactId>>][] = [
     [
@@ -90,15 +91,26 @@ export function analyzeExactDuplicates(snapshot: ContactSnapshot): ExactDuplicat
     ],
   ];
 
-  for (const [kind, index] of indexes) {
+  scanIndexes: for (const [kind, index] of indexes) {
     for (const [normalizedValue, contactIds] of index) {
       if (contactIds.size < 2) continue;
 
-      for (const contactPair of pairs([...contactIds].sort())) {
-        const key = contactPair.join('\u0000');
-        const match = pairSignals.get(key) ?? { contactIds: contactPair, signals: [] };
-        match.signals.push({ kind, normalizedValue });
-        pairSignals.set(key, match);
+      const sortedContactIds = [...contactIds].sort();
+      for (let left = 0; left < sortedContactIds.length; left += 1) {
+        for (let right = left + 1; right < sortedContactIds.length; right += 1) {
+          const contactPair: [ContactId, ContactId] = [
+            sortedContactIds[left],
+            sortedContactIds[right],
+          ];
+          const key = contactPair.join('\u0000');
+          if (!pairSignals.has(key) && pairSignals.size >= matchLimit) {
+            isTruncated = true;
+            break scanIndexes;
+          }
+          const match = pairSignals.get(key) ?? { contactIds: contactPair, signals: [] };
+          match.signals.push({ kind, normalizedValue });
+          pairSignals.set(key, match);
+        }
       }
     }
   }
@@ -113,5 +125,7 @@ export function analyzeExactDuplicates(snapshot: ContactSnapshot): ExactDuplicat
     affectedContactIds: Object.freeze(affectedContactIds),
     emailMatchCount: matches.filter(({ signals }) => signals.some(({ kind }) => kind === 'email')).length,
     phoneMatchCount: matches.filter(({ signals }) => signals.some(({ kind }) => kind === 'phone')).length,
+    isTruncated,
+    matchLimit,
   });
 }

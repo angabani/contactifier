@@ -101,4 +101,19 @@ describe('exact duplicate analysis', () => {
       ['b', 'c'],
     ]);
   });
+
+  it('bounds pair expansion for very widely shared contact values', () => {
+    const result = analyzeExactDuplicates(
+      snapshot(
+        Array.from({ length: 100 }, (_, index) =>
+          contact(`shared-${index}`, [], ['shared@example.com']),
+        ),
+      ),
+      25,
+    );
+
+    expect(result.matches).toHaveLength(25);
+    expect(result.isTruncated).toBe(true);
+    expect(result.matchLimit).toBe(25);
+  });
 });

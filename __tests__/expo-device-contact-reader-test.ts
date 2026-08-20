@@ -32,8 +32,8 @@ jest.mock('expo-contacts', () => ({
 }));
 
 import type { DeviceContactsApi, ExpoContactDetails } from '@/infrastructure/contacts/expo';
+import { ContactPermissionDeniedError } from '@/application';
 import {
-  ContactPermissionDeniedError,
   ExpoDeviceContactReader,
   mapExpoContact,
 } from '@/infrastructure/contacts/expo';
@@ -107,7 +107,10 @@ describe('Expo device contacts infrastructure', () => {
     expect(result.emailAddresses[0].value).toBe('ada@example.com');
     expect(result.birthdays[0].value).toEqual({ month: 12, day: 10, year: 1815 });
     expect(result.events[0].value.date).toEqual({ month: 7, day: 5 });
-    expect(result.photos).toEqual([{ uri: 'file:///ada-thumbnail.jpg' }]);
+    expect(result.photos).toEqual([{
+      uri: 'file:///ada-thumbnail.jpg',
+      assetId: 'device:personal:native-1:photo:0',
+    }]);
     expect(result.notes).toEqual([]);
   });
 
@@ -126,6 +129,15 @@ describe('Expo device contacts infrastructure', () => {
     expect(result.urls).toEqual([]);
   });
 
+  it('does not turn an empty native contact into a synthetic name', () => {
+    const result = mapExpoContact(
+      expoContact({ fullName: null, givenName: null, familyName: null, company: null }),
+      { kind: 'device' },
+    );
+    expect(result.displayName).toBe('');
+    expect(result.name).toBeUndefined();
+  });
+
   it('requests permission when it can still ask, then reads contacts', async () => {
     const api: DeviceContactsApi = {
       getPermissions: jest.fn().mockResolvedValue(permission(false, true)),
@@ -138,6 +150,27 @@ describe('Expo device contacts infrastructure', () => {
     expect(api.requestPermissions).toHaveBeenCalledTimes(1);
     expect(api.getAllDetails).toHaveBeenCalledTimes(1);
     expect(result.contacts).toHaveLength(1);
+  });
+
+  it('reads large directories through bounded native batches', async () => {
+    const firstBatch = Array.from({ length: 500 }, (_, index) =>
+      expoContact({ id: `native-${index}` }),
+    );
+    const getAllDetails = jest
+      .fn()
+      .mockResolvedValueOnce(firstBatch)
+      .mockResolvedValueOnce([expoContact({ id: 'native-500' })]);
+    const api: DeviceContactsApi = {
+      getPermissions: jest.fn().mockResolvedValue(permission(true, true)),
+      requestPermissions: jest.fn(),
+      getAllDetails,
+    };
+
+    const result = await new ExpoDeviceContactReader(api).readContacts({ kind: 'device' });
+
+    expect(result.contacts).toHaveLength(501);
+    expect(getAllDetails).toHaveBeenNthCalledWith(1, { limit: 500, offset: 0 });
+    expect(getAllDetails).toHaveBeenNthCalledWith(2, { limit: 500, offset: 500 });
   });
 
   it('supports limited iOS access when the permission is granted', async () => {

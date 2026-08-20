@@ -11,3 +11,10 @@ export interface ContactReadResult {
 export interface ContactReader {
   readContacts(source: ContactSourceRef): Promise<ContactReadResult>;
 }
+
+export class ContactPermissionDeniedError extends Error {
+  constructor(readonly canAskAgain: boolean) {
+    super('Permission to read contacts was denied.');
+    this.name = 'ContactPermissionDeniedError';
+  }
+}

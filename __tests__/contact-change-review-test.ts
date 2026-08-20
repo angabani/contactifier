@@ -16,6 +16,7 @@ import {
   createDemoContactSnapshot,
   createDemoPreviousContactSnapshot,
 } from '@/features/contact-import/demo-contact-data';
+import { contactReviewValues } from '@/features/contact-review/contact-change-presentation';
 
 function contact(
   id: string,
@@ -83,7 +84,7 @@ describe('contact change review', () => {
     expect(result.changes.map((change) => change.kind)).toEqual(['merge', 'merge']);
     expect(result.changes.map((change) =>
       change.kind === 'merge' ? change.contactIds.length : 0,
-    )).toEqual([3, 2]);
+    )).toEqual([2, 2]);
 
     const beautification = createBeautificationChangeSet({
       snapshot: demo,
@@ -110,7 +111,7 @@ describe('contact change review', () => {
     });
   });
 
-  it('turns a three-contact duplicate graph into one non-overlapping merge', () => {
+  it('does not transitively merge contacts without one shared exact identifier', () => {
     const result = proposed([
       contact('a', 'Ada One', '212-555-0100'),
       contact('b', 'Ada Two', '(212) 555-0100', 'ada@example.com'),
@@ -119,12 +120,37 @@ describe('contact change review', () => {
 
     expect(result.changes).toHaveLength(1);
     expect(result.changes[0]).toMatchObject({
-      id: 'merge:a:b:c',
+      id: 'merge:a:b',
+      kind: 'merge',
+      contactIds: ['a', 'b'],
+      decision: 'pending',
+      reasons: ['Same exact phone'],
+    });
+  });
+
+  it('can merge three contacts when all share the same exact identifier', () => {
+    const result = proposed([
+      contact('a', 'Ada One', undefined, 'team@example.com'),
+      contact('b', 'Ada Two', undefined, 'TEAM@example.com'),
+      contact('c', 'Ada Three', undefined, 'team@example.com'),
+    ]);
+    expect(result.changes).toHaveLength(1);
+    expect(result.changes[0]).toMatchObject({
       kind: 'merge',
       contactIds: ['a', 'b', 'c'],
-      decision: 'pending',
-      reasons: ['Same exact email', 'Same exact phone'],
     });
+  });
+
+  it('bounds each merge proposal when many contacts share one value', () => {
+    const result = proposed(
+      Array.from({ length: 25 }, (_, index) =>
+        contact(`shared-${index.toString().padStart(2, '0')}`, `Shared ${index}`, undefined, 'shared@example.com'),
+      ),
+    );
+    expect(result.changes).toHaveLength(3);
+    expect(
+      result.changes.map((change) => (change.kind === 'merge' ? change.contactIds.length : 0)),
+    ).toEqual([10, 10, 5]);
   });
 
   it('keeps distinct phone and email details in the proposed merged contact', () => {
@@ -142,6 +168,15 @@ describe('contact change review', () => {
       'work@example.com',
     ]);
     expect(change.after.id).toBe('a');
+  });
+
+  it('presents the actual phone and email values for merge review', () => {
+    const value = contact('a', 'Ada', '+1 (212) 555-0100', 'ada@example.com');
+
+    expect(contactReviewValues(value)).toEqual([
+      { id: 'phone:a:phone', kind: 'phone', label: 'Phone', value: '+1 (212) 555-0100' },
+      { id: 'email:a:email', kind: 'email', label: 'Email', value: 'ada@example.com' },
+    ]);
   });
 
   it('creates separate proposals for disconnected duplicate groups', () => {

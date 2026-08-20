@@ -1,5 +1,6 @@
 import {
   ActivityIndicator,
+  Alert,
   Linking,
   Platform,
   Pressable,
@@ -9,6 +10,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import Constants from 'expo-constants';
+import * as Device from 'expo-device';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -20,9 +23,26 @@ import { useDeviceContactScanSession } from './use-device-contact-scan';
 export function DeviceContactScanScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { state, scan, loadDemo } = useDeviceContactScanSession();
-  const isBusy = state.status === 'scanning' || state.status === 'backing-up';
+  const {
+    state,
+    scan,
+    loadDemo,
+    resumableWorkflow,
+    isResuming,
+    resumeError,
+    resume,
+    isDiscardingWorkflow,
+    discardWorkflowError,
+    discardResumableWorkflow,
+  } = useDeviceContactScanSession();
+  const isBusy =
+    state.status === 'scanning' ||
+    state.status === 'backing-up' ||
+    isResuming ||
+    isDiscardingWorkflow;
   const isWeb = Platform.OS === 'web';
+  const showIosCertification =
+    __DEV__ && Platform.OS === 'ios' && Device.isDevice && Constants.expoVersion === null;
 
   return (
     <ThemedView style={styles.screen}>
@@ -55,6 +75,72 @@ export function DeviceContactScanScreen() {
                 </ThemedText>
               </View>
             </ThemedView>
+
+            {resumableWorkflow && state.status !== 'scanning' && state.status !== 'backing-up' && (
+              <ThemedView type="backgroundElement" style={styles.resumeCard}>
+                <View style={styles.resultCopy}>
+                  <ThemedText type="smallBold">Continue your saved cleanup</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Your encrypted review is saved at the {resumableWorkflow.phase.replace('-', ' ')} step.
+                  </ThemedText>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isBusy}
+                  onPress={() => {
+                    void resume().then((resumed) => {
+                      if (resumed) router.push('/review');
+                    });
+                  }}
+                  style={[styles.resumeButton, { backgroundColor: theme.primary }, isBusy && styles.buttonMuted]}>
+                  {isResuming ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <ThemedText style={styles.buttonText}>Resume cleanup</ThemedText>
+                  )}
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isBusy}
+                  onPress={() =>
+                    Alert.alert(
+                      'Discard saved cleanup?',
+                      'This removes your saved review progress. Your verified contact backup will be kept.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Discard',
+                          style: 'destructive',
+                          onPress: () => void discardResumableWorkflow(),
+                        },
+                      ],
+                    )
+                  }
+                  style={styles.discardButton}>
+                  <ThemedText type="smallBold" themeColor="danger">
+                    {isDiscardingWorkflow ? 'Discarding…' : 'Discard saved cleanup'}
+                  </ThemedText>
+                </Pressable>
+              </ThemedView>
+            )}
+
+            {resumeError && (
+              <View style={[styles.messageCard, { borderColor: theme.danger }]}>
+                <ThemedText type="smallBold">Saved cleanup could not be resumed</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Its matching encrypted backup or device key is unavailable. Your contacts were not changed.
+                </ThemedText>
+              </View>
+            )}
+
+            {discardWorkflowError && (
+              <View style={[styles.messageCard, { borderColor: theme.danger }]}>
+                <ThemedText type="smallBold">Saved cleanup could not be discarded</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  No contact or backup was changed. Please try again.
+                </ThemedText>
+              </View>
+            )}
 
             {state.status === 'backing-up' && (
               <ThemedView type="backgroundElement" style={styles.backupProgressCard}>
@@ -126,6 +212,16 @@ export function DeviceContactScanScreen() {
                     <ThemedText type="small" themeColor="textSecondary">
                       No exact duplicates found. Use the demo data below to test the review flow.
                     </ThemedText>
+                  )}
+
+                  {state.analysis.isTruncated && (
+                    <View style={[styles.messageCard, { borderColor: theme.danger }]}>
+                      <ThemedText type="smallBold">Duplicate results limited for safety</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Review this batch, then scan again. Contactifier will not create an
+                        unbounded number of pair suggestions from one shared value.
+                      </ThemedText>
+                    </View>
                   )}
 
                   {state.analysis.matches.length + state.quality.updateCount + state.quality.deleteCandidateCount > 0 && (
@@ -290,6 +386,16 @@ export function DeviceContactScanScreen() {
                   Try review flow with demo data
                 </ThemedText>
               </Pressable>
+              {showIosCertification && (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => router.push('/ios-certification' as never)}
+                  style={styles.developerButton}>
+                  <ThemedText type="smallBold" themeColor="danger">
+                    Open developer iOS certification harness
+                  </ThemedText>
+                </Pressable>
+              )}
             </View>
           </View>
         </ScrollView>
@@ -329,6 +435,15 @@ const styles = StyleSheet.create({
   },
   privacyDot: { width: 10, height: 10, borderRadius: 5, marginTop: 5 },
   privacyCopy: { flex: 1, gap: Spacing.one },
+  resumeCard: { gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
+  resumeButton: {
+    minHeight: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.three,
+  },
+  discardButton: { alignItems: 'center', paddingVertical: Spacing.one },
   backupProgressCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -403,4 +518,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: Spacing.three,
   },
+  developerButton: { alignItems: 'center', paddingVertical: Spacing.two },
 });

@@ -55,11 +55,15 @@ function manifest(contactCount: number): BackupManifest {
             fileName: 'chunk-000000.cfb',
             contactCount,
             encryptedSizeInBytes: 256,
-            sha256: 'chunk-hash',
+            sha256: '1'.repeat(64),
           },
         ]
       : [],
-    artifact: { uri: 'file:///backup-1', sizeInBytes: 256, sha256: 'backup-hash' },
+    artifact: {
+      uri: 'file:///backup-1',
+      sizeInBytes: contactCount ? 256 : 0,
+      sha256: '2'.repeat(64),
+    },
     encryption: { algorithm: 'AES-256-GCM', keyAlias: 'contactifier.backup.backup-1' },
   };
 }
@@ -78,6 +82,47 @@ describe('backup foundation', () => {
   it('rejects a manifest whose chunks do not account for every contact', () => {
     const invalid = { ...manifest(2), contactCount: 3 };
     expect(() => validateBackupManifest(invalid)).toThrow('does not match the manifest');
+  });
+
+  it('rejects unsafe chunk paths and malformed integrity hashes', () => {
+    const valid = manifest(1);
+    expect(() =>
+      validateBackupManifest({
+        ...valid,
+        chunks: [{ ...valid.chunks[0], fileName: '../contacts.json' }],
+      }),
+    ).toThrow('chunk metadata');
+    expect(() =>
+      validateBackupManifest({
+        ...valid,
+        artifact: { ...valid.artifact, sha256: 'not-a-sha256' },
+      }),
+    ).toThrow('artifact hash');
+  });
+
+  it('validates encrypted photo assets as part of the artifact size and identity map', () => {
+    const valid = manifest(1);
+    const photoAsset = {
+      index: 0,
+      assetId: 'one:0',
+      contactId: 'one',
+      photoIndex: 0,
+      fileName: 'photo-000000.cfp',
+      plaintextSizeInBytes: 128,
+      encryptedSizeInBytes: 160,
+      plaintextSha256: '3'.repeat(64),
+      sha256: '4'.repeat(64),
+    };
+    expect(() => validateBackupManifest({
+      ...valid,
+      photoAssets: [photoAsset],
+      artifact: { ...valid.artifact, sizeInBytes: 416 },
+    })).not.toThrow();
+    expect(() => validateBackupManifest({
+      ...valid,
+      photoAssets: [photoAsset, { ...photoAsset, index: 1, fileName: 'photo-000001.cfp' }],
+      artifact: { ...valid.artifact, sizeInBytes: 576 },
+    })).toThrow('references must be unique');
   });
 
   it('passes progress configuration to the verified store', async () => {
