@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import Constants from 'expo-constants';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Constants, { AppOwnership } from 'expo-constants';
 import * as Device from 'expo-device';
 import { getPermissionsAsync } from 'expo-contacts';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -14,13 +15,17 @@ import { useTheme } from '@/hooks/use-theme';
 
 import {
   canArmIosCertificationHarness,
+  canAutoSeedIosSimulator,
   canManageIosCertificationFixtures,
   IOS_CERTIFICATION_CONFIRMATION,
   IOS_CERTIFICATION_SCENARIOS,
+  iosCertificationTarget,
   iosCertificationDenialReasons,
 } from './ios-certification-policy';
 
 export function IosCertificationHarnessScreen() {
+  const { seed } = useLocalSearchParams<{ seed?: string }>();
+  const autoSeedStarted = useRef(false);
   const theme = useTheme();
   const [fullContactAccess, setFullContactAccess] = useState(false);
   const [confirmation, setConfirmation] = useState('');
@@ -33,8 +38,7 @@ export function IosCertificationHarnessScreen() {
     if (
       !__DEV__ ||
       Platform.OS !== 'ios' ||
-      !Device.isDevice ||
-      Constants.expoVersion !== null
+      Constants.appOwnership === AppOwnership.Expo
     ) return;
     void getPermissionsAsync().then((permission) => {
       setFullContactAccess(permission.granted && permission.accessPrivileges === 'all');
@@ -53,10 +57,11 @@ export function IosCertificationHarnessScreen() {
     development: __DEV__,
     platform: Platform.OS,
     physicalDevice: Device.isDevice,
-    expoGo: Constants.expoVersion !== null,
+    expoGo: Constants.appOwnership === AppOwnership.Expo,
     fullContactAccess,
   }), [fullContactAccess]);
   const denialReasons = iosCertificationDenialReasons(environment);
+  const target = iosCertificationTarget(environment);
   const armed = canArmIosCertificationHarness({
     environment,
     confirmation,
@@ -64,6 +69,20 @@ export function IosCertificationHarnessScreen() {
     verifiedBackupIds,
   });
   const fixturesEnabled = canManageIosCertificationFixtures({ environment, confirmation });
+
+  useEffect(() => {
+    if (autoSeedStarted.current || !canAutoSeedIosSimulator({ environment, seedToken: seed })) return;
+    autoSeedStarted.current = true;
+    setFixtureBusy(true);
+    setFixtureMessage('Creating versioned simulator certification dataset…');
+    void iosCertificationFixtures.setup().then((result) => {
+      setFixtureMessage(result.outcome === 'ready'
+        ? `Simulator dataset ready: ${result.fixtureSet.fixtures.length} owned contacts across version ${result.fixtureSet.datasetVersion}.`
+        : `Simulator dataset stopped safely: ${result.outcome}.`);
+    }).catch((error: unknown) => {
+      setFixtureMessage(error instanceof Error ? error.message : 'Simulator dataset setup failed.');
+    }).finally(() => setFixtureBusy(false));
+  }, [environment, seed]);
 
   const setupFixtures = async () => {
     setFixtureBusy(true);
@@ -99,6 +118,11 @@ export function IosCertificationHarnessScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           <ThemedText style={styles.eyebrow}>DEVELOPER ONLY</ThemedText>
           <ThemedText type="title">iOS writer certification</ThemedText>
+          <ThemedView type="backgroundElement" style={styles.environmentBadge}>
+            <ThemedText type="smallBold" themeColor={target === 'simulator' ? 'success' : 'danger'}>
+              {target === 'simulator' ? 'SIMULATOR — disposable virtual contacts' : 'PHYSICAL DEVICE — real contact store'}
+            </ThemedText>
+          </ThemedView>
           <ThemedText themeColor="textSecondary">
             This harness never certifies itself and does not register the iOS writer in production.
             Use only contacts created specifically for destructive testing.
@@ -175,7 +199,9 @@ export function IosCertificationHarnessScreen() {
                 <ThemedText type="small" themeColor="textSecondary">
                   {scenario.expectedEvidence}
                 </ThemedText>
-                <ThemedText type="small" themeColor="danger">Pending real-device evidence</ThemedText>
+                <ThemedText type="small" themeColor="danger">
+                  Pending {target === 'simulator' ? 'simulator' : 'real-device'} evidence
+                </ThemedText>
               </ThemedView>
             ))}
           </View>
@@ -196,6 +222,7 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   eyebrow: { fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 1.8 },
+  environmentBadge: { alignSelf: 'flex-start', paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, borderRadius: 8 },
   card: { gap: Spacing.two, padding: Spacing.three, borderRadius: Spacing.three },
   input: {
     minHeight: 46,

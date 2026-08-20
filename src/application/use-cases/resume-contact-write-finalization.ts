@@ -24,13 +24,15 @@ export class ResumeContactWriteFinalization {
   ): Promise<CleanupWorkflow> {
     authorization.assertMatches(workflow, this.writerAdapterId, this.clock.now());
     if (
-      workflow.phase !== 'failed' ||
-      workflow.failure?.code !== 'finalization-outcome-unknown' ||
+      (workflow.phase !== 'finalizing' &&
+        (workflow.phase !== 'failed' || workflow.failure?.code !== 'finalization-outcome-unknown')) ||
       !workflow.writePlan
     ) {
       throw new Error('Workflow does not contain interrupted marker finalization.');
     }
-    let current = await this.transition(workflow, 'finalizing');
+    let current = workflow.phase === 'finalizing'
+      ? workflow
+      : await this.transition(workflow, 'finalizing');
     const appliedReceipts = new Map(
       current.journal
         .filter(({ outcome, receipt }) => outcome === 'applied' && receipt)

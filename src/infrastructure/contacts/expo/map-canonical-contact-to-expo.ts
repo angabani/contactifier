@@ -58,7 +58,11 @@ export function mapCanonicalContactToExpoCreate(
 
 export function mapCanonicalContactToExpoPatch(contact: CanonicalContact): ContactPatch {
   const create = mapCanonicalContactToExpoCreate(contact);
-  const { image: _preservedUntilPhotoBackupIsComplete, ...supportedPatch } = create;
+  const {
+    image: _preservedUntilPhotoBackupIsComplete,
+    birthday: safeBirthday,
+    ...supportedPatch
+  } = create;
   return {
     ...supportedPatch,
     givenName: create.givenName ?? null,
@@ -73,6 +77,9 @@ export function mapCanonicalContactToExpoPatch(contact: CanonicalContact): Conta
     company: create.company ?? null,
     department: create.department ?? null,
     jobTitle: create.jobTitle ?? null,
-    birthday: create.birthday ?? null,
+    // Expo Contacts SDK 57 passes `null` to CNMutableContact.setBirthday on iOS, which raises an
+    // Objective-C exception and terminates the process. Omission is the only safe partial-patch
+    // behavior until clearing birthdays has a separately certified native implementation.
+    ...(safeBirthday ? { birthday: safeBirthday } : {}),
   };
 }

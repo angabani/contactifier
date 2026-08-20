@@ -59,8 +59,19 @@ export class ExpoIosCertificationFixtureGateway implements IosFixtureGateway {
     const value: CreateContactRecord = {
       givenName: spec.givenName,
       familyName: spec.familyName,
-      phones: [{ label: 'mobile', number: spec.phone }],
-      emails: [{ label: 'home', address: spec.email }],
+      phones: spec.phones.map(({ label, value }) => ({ label, number: value })),
+      emails: spec.emails.map(({ label, value }) => ({ label, address: value })),
+      company: spec.company,
+      department: spec.department,
+      jobTitle: spec.jobTitle,
+      addresses: spec.address ? [{
+        label: spec.address.label,
+        street: spec.address.street,
+        city: spec.address.city,
+        region: spec.address.region,
+        postcode: spec.address.postalCode,
+        country: spec.address.country,
+      }] : [],
       urlAddresses: [{ label: 'Contactifier ownership', url: spec.marker }],
     };
     return (await Contact.create(value)).id;

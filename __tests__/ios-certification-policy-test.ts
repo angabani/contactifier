@@ -1,7 +1,11 @@
 import {
   canArmIosCertificationHarness,
+  canAutoSeedIosSimulator,
+  canManageIosCertificationFixtures,
   IOS_CERTIFICATION_CONFIRMATION,
   IOS_CERTIFICATION_SCENARIOS,
+  IOS_SIMULATOR_SEED_TOKEN,
+  iosCertificationTarget,
   iosCertificationDenialReasons,
 } from '@/features/developer/ios-certification-policy';
 
@@ -24,10 +28,35 @@ describe('iOS certification harness policy', () => {
     })).toEqual([
       'development-build-required',
       'ios-required',
-      'physical-device-required',
       'expo-go-unsupported',
       'full-access-required',
     ]);
+  });
+
+  it('allows disposable fixture certification in an iOS simulator', () => {
+    const simulator = { ...eligible, physicalDevice: false };
+
+    expect(iosCertificationTarget(simulator)).toBe('simulator');
+    expect(iosCertificationDenialReasons(simulator)).toEqual([]);
+    expect(canManageIosCertificationFixtures({
+      environment: simulator,
+      confirmation: IOS_CERTIFICATION_CONFIRMATION,
+    })).toBe(true);
+  });
+
+  it('still identifies a physical contact store separately', () => {
+    expect(iosCertificationTarget(eligible)).toBe('physical-device');
+    expect(canAutoSeedIosSimulator({
+      environment: eligible,
+      seedToken: IOS_SIMULATOR_SEED_TOKEN,
+    })).toBe(false);
+  });
+
+  it('allows exact-token automated seeding only in an eligible simulator', () => {
+    const simulator = { ...eligible, physicalDevice: false };
+    expect(canAutoSeedIosSimulator({ environment: simulator, seedToken: IOS_SIMULATOR_SEED_TOKEN })).toBe(true);
+    expect(canAutoSeedIosSimulator({ environment: simulator, seedToken: 'wrong' })).toBe(false);
+    expect(canAutoSeedIosSimulator({ environment: { ...simulator, development: false }, seedToken: IOS_SIMULATOR_SEED_TOKEN })).toBe(false);
   });
 
   it('requires an exact destructive-test phrase and verified backup identity', () => {

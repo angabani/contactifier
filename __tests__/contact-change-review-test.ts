@@ -1,5 +1,6 @@
 import {
   createBeautificationChangeSet,
+  carryForwardChangeDecisions,
   createExactDuplicateChangeSet,
   setChangeDecision,
   summarizeChangeDecisions,
@@ -9,6 +10,7 @@ import {
   analyzeContactQuality,
   compareContactSnapshots,
   createContactSnapshot,
+  createCleanupWorkflow,
   type CanonicalContact,
   type ContactSnapshot,
 } from '@/domain';
@@ -217,5 +219,49 @@ describe('contact change review', () => {
     ]);
     expect(summarizeChangeDecisions(original).readyToApply).toBe(false);
     expect(() => setChangeDecision(original, 'missing', 'accepted')).toThrow('unknown change');
+  });
+
+  it('carries rejected and later decisions only while source contacts are unchanged', () => {
+    const original = proposed([
+      contact('a', 'A', '212-555-0100'),
+      contact('b', 'B', '212 555 0100'),
+    ]);
+    const rejected = setChangeDecision(original, original.changes[0].id, 'rejected');
+    const history = createCleanupWorkflow({
+      id: 'history',
+      source: { kind: 'device' },
+      snapshotId: rejected.snapshotId,
+      backupId: 'backup-history',
+      changeSet: rejected,
+      createdAt: '2026-08-17T10:00:00.000Z',
+    });
+
+    expect(carryForwardChangeDecisions(proposed([
+      contact('a', 'A', '212-555-0100'),
+      contact('b', 'B', '212 555 0100'),
+    ]), [history]).changes[0].decision).toBe('rejected');
+
+    expect(carryForwardChangeDecisions(proposed([
+      contact('a', 'A changed', '212-555-0100'),
+      contact('b', 'B', '212 555 0100'),
+    ]), [history]).changes[0].decision).toBe('pending');
+  });
+
+  it('returns accepted history to pending when the same suggestion still exists', () => {
+    const original = proposed([
+      contact('a', 'A', '212-555-0100'),
+      contact('b', 'B', '212 555 0100'),
+    ]);
+    const accepted = setChangeDecision(original, original.changes[0].id, 'accepted');
+    const history = createCleanupWorkflow({
+      id: 'accepted-history',
+      source: { kind: 'device' },
+      snapshotId: accepted.snapshotId,
+      backupId: 'backup-history',
+      changeSet: accepted,
+      createdAt: '2026-08-17T10:00:00.000Z',
+    });
+
+    expect(carryForwardChangeDecisions(original, [history]).changes[0].decision).toBe('pending');
   });
 });

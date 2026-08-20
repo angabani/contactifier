@@ -135,6 +135,10 @@ export function useDeviceContactScan() {
     }
   }, []);
 
+  const invalidateScan = useCallback(() => {
+    setState({ status: 'idle' });
+  }, []);
+
   const loadDemo = useCallback(() => {
     const snapshot = createDemoContactSnapshot();
     const delta = compareContactSnapshots(createDemoPreviousContactSnapshot(), snapshot);
@@ -190,6 +194,7 @@ export function useDeviceContactScan() {
   return {
     state,
     scan,
+    invalidateScan,
     loadDemo,
     resumableWorkflow,
     isResuming,

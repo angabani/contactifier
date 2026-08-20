@@ -125,6 +125,7 @@ export function contactsSemanticallyEqual(
 export function createContactRestorePlan(
   backup: ContactSnapshot,
   current: ContactSnapshot,
+  sourceAliases: ReadonlyMap<string, string> = new Map(),
 ): ContactRestorePlan {
   assertDomain(
     isSameContactSource(backup.source, current.source),
@@ -134,6 +135,12 @@ export function createContactRestorePlan(
   const currentBySourceId = new Map(
     current.contacts.map((contact) => [contact.recordRef.sourceContactId, contact]),
   );
+  for (const [backupSourceId, currentSourceId] of sourceAliases) {
+    const aliased = currentBySourceId.get(currentSourceId);
+    if (aliased && !currentBySourceId.has(backupSourceId)) {
+      currentBySourceId.set(backupSourceId, aliased);
+    }
+  }
   const items = backup.contacts.map((backupContact): RestorePlanItem => {
     const currentContact = currentBySourceId.get(backupContact.recordRef.sourceContactId);
     if (!currentContact) {

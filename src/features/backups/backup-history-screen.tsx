@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -12,7 +12,7 @@ import { useBackupHistory } from './use-backup-history';
 export function BackupHistoryScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const { state, preview } = useBackupHistory();
+  const { state, preview, restore } = useBackupHistory();
   const backups = 'backups' in state ? state.backups : [];
 
   return (
@@ -83,6 +83,25 @@ export function BackupHistoryScreen() {
 
             {state.status === 'previewing' && <ActivityIndicator color={theme.primary} />}
 
+            {state.status === 'restoring' && (
+              <ThemedView type="backgroundElement" style={styles.card}>
+                <ActivityIndicator color={theme.primary} />
+                <ThemedText type="smallBold">Restoring and verifying contacts…</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Every affected contact has its own encrypted transaction and rollback plan.
+                </ThemedText>
+              </ThemedView>
+            )}
+
+            {state.status === 'restored' && (
+              <View style={[styles.previewCard, { borderColor: state.attentionCount === 0 ? theme.success : theme.danger }]}>
+                <ThemedText type="smallBold">Backup restoration finished</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {state.completedCount} contacts restored and verified · {state.attentionCount} need attention.
+                </ThemedText>
+              </View>
+            )}
+
             {state.status === 'preview' && (
               <View style={[styles.previewCard, { borderColor: theme.primary }]}>
                 <ThemedText type="smallBold">Restore preview</ThemedText>
@@ -92,6 +111,7 @@ export function BackupHistoryScreen() {
                 <View style={styles.metrics}>
                   <Metric label="Would update" value={state.plan.updateCount} />
                   <Metric label="Would recreate" value={state.plan.recreateCount} />
+                  <Metric label="Remove app-created extras" value={state.derivedDeleteCount} />
                   <Metric label="Unchanged" value={state.plan.unchangedCount} />
                   <Metric label="Unavailable" value={state.plan.unavailableCount} />
                 </View>
@@ -109,6 +129,21 @@ export function BackupHistoryScreen() {
                   Contacts added after this backup are left alone. Unavailable contacts are never
                   treated as deleted.
                 </ThemedText>
+                {(state.plan.updateCount > 0 || state.plan.recreateCount > 0 || state.derivedDeleteCount > 0) && (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => Alert.alert(
+                      'Restore all backed-up contacts?',
+                      `This will update ${state.plan.updateCount}, recreate ${state.plan.recreateCount}, and remove ${state.derivedDeleteCount} verified merge outputs. Unrelated contacts added later will be kept.`,
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Restore and verify', style: 'destructive', onPress: () => void restore() },
+                      ],
+                    )}
+                    style={styles.restoreButton}>
+                    <ThemedText type="smallBold" style={styles.restoreButtonText}>Restore all and verify</ThemedText>
+                  </Pressable>
+                )}
               </View>
             )}
           </View>
@@ -151,6 +186,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: Spacing.three,
   },
+  restoreButton: { minHeight: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#B42318' },
+  restoreButtonText: { color: '#FFFFFF' },
   pressed: { opacity: 0.6 },
   previewCard: { gap: Spacing.three, borderWidth: 1, borderRadius: Spacing.three, padding: Spacing.three },
   metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },

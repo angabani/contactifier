@@ -68,4 +68,8 @@ export class ManageCleanupWorkflow {
   listResumable(): Promise<readonly CleanupWorkflowSummary[]> {
     return this.repository.listResumable();
   }
+
+  listHistory(): Promise<readonly CleanupWorkflowSummary[]> {
+    return this.repository.listAll?.() ?? this.repository.listResumable();
+  }
 }

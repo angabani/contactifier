@@ -39,6 +39,7 @@ export {
   compensationsForExecutedOperations,
   ContactWritePlanError,
   createDryRunContactWritePlan,
+  splitContactWritePlanByChange,
   validateContactWritePlan,
 } from './changes/contact-write-plan';
 export type {
@@ -46,6 +47,7 @@ export type {
   ContactWriteOperation,
   ContactWritePlan,
   ContactWritePlanErrorCode,
+  PerChangeContactWritePlan,
 } from './changes/contact-write-plan';
 export type {
   AppliedChangeSet,

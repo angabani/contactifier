@@ -48,7 +48,7 @@ routes -> features -> application -> domain
 - `src/app`: Expo Router route entries
 
 Layer boundaries are enforced by ESLint. See `docs/architecture.md` for safety invariants and
-backup/write planning details.
+backup/write planning details, and `docs/requirements.md` for the product and delivery baseline.
 
 ## Implemented safety flow
 

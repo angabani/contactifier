@@ -1,11 +1,13 @@
 export const IOS_CERTIFICATION_CONFIRMATION = 'CONTACTIFIER DISPOSABLE CONTACTS ONLY';
+export const IOS_SIMULATOR_SEED_TOKEN = 'contactifier-dataset-v2';
 
 export type IosCertificationDenialReason =
   | 'development-build-required'
   | 'expo-go-unsupported'
   | 'full-access-required'
-  | 'ios-required'
-  | 'physical-device-required';
+  | 'ios-required';
+
+export type IosCertificationTarget = 'physical-device' | 'simulator';
 
 export interface IosCertificationEnvironment {
   readonly development: boolean;
@@ -19,6 +21,12 @@ export interface IosCertificationScenario {
   readonly id: string;
   readonly title: string;
   readonly expectedEvidence: string;
+}
+
+export function iosCertificationTarget(
+  environment: Pick<IosCertificationEnvironment, 'physicalDevice'>,
+): IosCertificationTarget {
+  return environment.physicalDevice ? 'physical-device' : 'simulator';
 }
 
 export const IOS_CERTIFICATION_SCENARIOS: readonly IosCertificationScenario[] = Object.freeze([
@@ -37,7 +45,6 @@ export function iosCertificationDenialReasons(
   const reasons: IosCertificationDenialReason[] = [];
   if (!environment.development) reasons.push('development-build-required');
   if (environment.platform !== 'ios') reasons.push('ios-required');
-  if (!environment.physicalDevice) reasons.push('physical-device-required');
   if (environment.expoGo) reasons.push('expo-go-unsupported');
   if (!environment.fullContactAccess) reasons.push('full-access-required');
   return Object.freeze(reasons);
@@ -64,5 +71,16 @@ export function canManageIosCertificationFixtures(input: {
   return (
     iosCertificationDenialReasons(input.environment).length === 0 &&
     input.confirmation === IOS_CERTIFICATION_CONFIRMATION
+  );
+}
+
+export function canAutoSeedIosSimulator(input: {
+  readonly environment: IosCertificationEnvironment;
+  readonly seedToken: string | undefined;
+}): boolean {
+  return (
+    iosCertificationTarget(input.environment) === 'simulator' &&
+    iosCertificationDenialReasons(input.environment).length === 0 &&
+    input.seedToken === IOS_SIMULATOR_SEED_TOKEN
   );
 }

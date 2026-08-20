@@ -51,6 +51,11 @@ export interface ContactWritePlan {
   readonly deleteCount: number;
 }
 
+export interface PerChangeContactWritePlan extends ContactWritePlan {
+  readonly transactionId: string;
+  readonly changeId: string;
+}
+
 export type ContactWritePlanErrorCode =
   | 'backup-mismatch'
   | 'contact-missing'
@@ -131,6 +136,31 @@ export function compensationsForExecutedOperations(
   return Object.freeze(
     plan.compensations.filter(({ operationId }) => executed.has(operationId)),
   );
+}
+
+export function splitContactWritePlanByChange(
+  plan: ContactWritePlan,
+): readonly PerChangeContactWritePlan[] {
+  validateContactWritePlan(plan);
+  const changeIds = [...new Set(plan.operations.map(({ changeId }) => changeId))];
+  return Object.freeze(changeIds.map((changeId) => {
+    const operations = plan.operations.filter((operation) => operation.changeId === changeId);
+    const operationIds = new Set(operations.map(({ id }) => id));
+    const compensations = plan.compensations.filter(({ operationId }) => operationIds.has(operationId));
+    const transaction = validateContactWritePlan({
+      ...plan,
+      operations,
+      compensations,
+      createCount: operations.filter(({ kind }) => kind === 'create').length,
+      updateCount: operations.filter(({ kind }) => kind === 'update').length,
+      deleteCount: operations.filter(({ kind }) => kind === 'delete').length,
+    });
+    return Object.freeze({
+      ...transaction,
+      transactionId: `${plan.changeSetId}:${changeId}`,
+      changeId,
+    });
+  }));
 }
 
 function acceptedBefore(change: ProposedChange): readonly CanonicalContact[] {

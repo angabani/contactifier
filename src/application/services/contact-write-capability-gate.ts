@@ -93,9 +93,19 @@ export class ContactWriteCapabilityGate {
   }): ContactWriteAuthorization {
     return this.authorizeInternal(
       input,
-      input.workflow.phase === 'failed' &&
-        input.workflow.failure?.code === 'finalization-outcome-unknown',
+      input.workflow.phase === 'finalizing' ||
+        (input.workflow.phase === 'failed' &&
+          input.workflow.failure?.code === 'finalization-outcome-unknown'),
     );
+  }
+
+  authorizeVerification(input: {
+    readonly workflow: CleanupWorkflow;
+    readonly certification: ContactWriterCertification;
+    readonly runtime: ContactWriteRuntimePrerequisites;
+    readonly now: Date;
+  }): ContactWriteAuthorization {
+    return this.authorizeInternal(input, input.workflow.phase === 'verifying');
   }
 
   private authorizeInternal(input: {

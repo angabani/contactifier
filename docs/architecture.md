@@ -162,18 +162,19 @@ certification; they do not constitute native certification.
 
 ## iOS certification harness
 
-The certification route is a development-build control plane, not a production feature. Its
-policy requires a debug build, physical iOS device, non–Expo Go runtime, full contact access, an
-exact destructive-test confirmation phrase, and a backup identifier returned by the verified
-backup repository. The home-screen entry point is omitted unless the immutable environment checks
-pass, and the route repeats every check so a direct deep link cannot arm it. Opening a locked route
-does not request permissions or load backups.
+The certification route is a development-build control plane, not a production feature. It has a
+disposable iOS Simulator mode and a separately identified physical-device mode. Both require a
+debug, non–Expo Go iOS runtime and full contact access; scenario execution additionally requires an
+exact destructive-test confirmation phrase and a backup identifier returned by the verified backup
+repository. The route repeats its immutable environment checks so a direct deep link cannot bypass
+them.
 
 The harness lists separate evidence scenarios for backup/restore, merge, write interruption,
-marker-finalization interruption, rollback, permission changes, and photo round-trip. All remain
-explicitly pending; the screen cannot mutate contacts and does not change the empty production
-registry or the disabled iOS certification record. Native scenario actions will be added one at a
-time and restricted to disposable fixture contacts.
+marker-finalization interruption, rollback, permission changes, and photo round-trip. Simulator
+fixture setup persists unique ownership markers before creating native records, and cleanup requires
+both the exact visible prefix and URL marker after a fresh reread. A simulator-only execution path
+can invoke the journaled writer only when every operation retains fixture ownership. It does not
+change the empty production registry or the disabled physical-device certification record.
 
 ## First application boundary
 
@@ -256,8 +257,9 @@ allowed to run. Preflight requires the exact verified backup associated with the
 full contact access, and a fresh source read whose targeted contacts still match their reviewed
 before-states. Creates and updates are ordered before deletes. Every operation has a reverse-order
 compensation step so an executor can select the correct rollback subset after a partial failure.
-The current UI exposes this plan and its impact counts but contains no path that executes native
-contact writes.
+The review UI exposes this plan and its impact counts. A development iOS Simulator may execute a
+plan only through the independently gated owned-fixture path; production and physical-device writes
+remain unavailable.
 
 ## Duplicate safety bounds
 

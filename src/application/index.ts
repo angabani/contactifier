@@ -36,6 +36,19 @@ export { LoadContactBackup } from './use-cases/load-contact-backup';
 export { ListContactBackups } from './use-cases/list-contact-backups';
 export { PreviewContactRestore } from './use-cases/preview-contact-restore';
 export {
+  prepareContactBackupRestore,
+  type PreparedContactBackupRestore,
+} from './use-cases/prepare-contact-backup-restore';
+export {
+  previewContactTransactionUndo,
+  type ContactTransactionUndoBlockReason,
+  type ContactTransactionUndoPreview,
+} from './use-cases/preview-contact-transaction-undo';
+export {
+  prepareContactTransactionUndo,
+  type PreparedContactTransactionUndo,
+} from './use-cases/prepare-contact-transaction-undo';
+export {
   createExactDuplicateChangeSet,
   type CreateExactDuplicateChangeSetInput,
 } from './use-cases/create-exact-duplicate-change-set';
@@ -67,9 +80,19 @@ export {
   DiscardCleanupWorkflow,
 } from './use-cases/discard-cleanup-workflow';
 export { ExecuteContactWritePlan } from './use-cases/execute-contact-write-plan';
+export { carryForwardChangeDecisions } from './use-cases/carry-forward-change-decisions';
+export {
+  createContactWriteConfirmation,
+  type ContactWriteConfirmation,
+} from './use-cases/create-contact-write-confirmation';
+export {
+  CreatePerChangeCleanupWorkflows,
+  isPerChangeCleanupWorkflow,
+} from './use-cases/create-per-change-cleanup-workflows';
 export { ReconcileUnknownContactWrite } from './use-cases/reconcile-unknown-contact-write';
 export { WithMaterializedContactPhotos } from './use-cases/with-materialized-contact-photos';
 export { ResumeContactWriteFinalization } from './use-cases/resume-contact-write-finalization';
+export { ResumeContactWriteVerification } from './use-cases/resume-contact-write-verification';
 export {
   ContactWriteAuthorization,
   ContactWriteCapabilityError,

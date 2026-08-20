@@ -10,8 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import Constants from 'expo-constants';
-import * as Device from 'expo-device';
+import Constants, { AppOwnership } from 'expo-constants';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -42,7 +41,7 @@ export function DeviceContactScanScreen() {
     isDiscardingWorkflow;
   const isWeb = Platform.OS === 'web';
   const showIosCertification =
-    __DEV__ && Platform.OS === 'ios' && Device.isDevice && Constants.expoVersion === null;
+    __DEV__ && Platform.OS === 'ios' && Constants.appOwnership !== AppOwnership.Expo;
 
   return (
     <ThemedView style={styles.screen}>
@@ -51,8 +50,19 @@ export function DeviceContactScanScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}>
           <View style={styles.content}>
-            <View style={[styles.brandMark, { backgroundColor: theme.primarySoft }]}>
-              <ThemedText style={[styles.brandLetter, { color: theme.primary }]}>C</ThemedText>
+            <View style={styles.topBar}>
+              <View style={[styles.brandMark, { backgroundColor: theme.primarySoft }]}> 
+                <ThemedText style={[styles.brandLetter, { color: theme.primary }]}>C</ThemedText>
+              </View>
+              {!isWeb && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open transaction activity and Undo"
+                  onPress={() => router.push('/activity' as never)}
+                  style={[styles.activityButton, { borderColor: theme.primary }]}>
+                  <ThemedText type="smallBold" style={{ color: theme.primary }}>Activity &amp; Undo</ThemedText>
+                </Pressable>
+              )}
             </View>
 
             <View style={styles.heading}>
@@ -372,11 +382,14 @@ export function DeviceContactScanScreen() {
                   : 'You choose which suggested changes to apply.'}
               </ThemedText>
               {!isWeb && (
-                <Pressable onPress={() => router.push('/backups')} style={styles.backupsButton}>
-                  <ThemedText type="smallBold" style={{ color: theme.primary }}>
-                    View verified backups
-                  </ThemedText>
-                </Pressable>
+                <View style={styles.localDataLinks}>
+                  <Pressable onPress={() => router.push('/activity' as never)} style={styles.backupsButton}>
+                    <ThemedText type="smallBold" style={{ color: theme.primary }}>View activity</ThemedText>
+                  </Pressable>
+                  <Pressable onPress={() => router.push('/backups')} style={styles.backupsButton}>
+                    <ThemedText type="smallBold" style={{ color: theme.primary }}>View verified backups</ThemedText>
+                  </Pressable>
+                </View>
               )}
               <Pressable
                 accessibilityRole="button"
@@ -415,6 +428,15 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.five,
     gap: Spacing.four,
   },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.three },
+  activityButton: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: Spacing.three,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   brandMark: {
     width: 56,
     height: 56,
@@ -435,6 +457,7 @@ const styles = StyleSheet.create({
   },
   privacyDot: { width: 10, height: 10, borderRadius: 5, marginTop: 5 },
   privacyCopy: { flex: 1, gap: Spacing.one },
+  localDataLinks: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: Spacing.three },
   resumeCard: { gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
   resumeButton: {
     minHeight: 48,

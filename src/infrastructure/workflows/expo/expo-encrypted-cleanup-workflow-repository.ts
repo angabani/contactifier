@@ -86,7 +86,7 @@ function validateCommit(value: WorkflowCommit): WorkflowCommit {
     !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.id) ||
     !Number.isSafeInteger(value.revision) ||
     value.revision < 0 ||
-    !['applying', 'completed', 'failed', 'preflighted', 'reviewing', 'rolled-back', 'rolling-back', 'verifying'].includes(value.phase) ||
+    !['applying', 'completed', 'failed', 'finalizing', 'preflighted', 'reviewing', 'rolled-back', 'rolling-back', 'verifying'].includes(value.phase) ||
     Number.isNaN(Date.parse(value.createdAt)) ||
     Number.isNaN(Date.parse(value.updatedAt)) ||
     !Array.isArray(value.chunks) ||
@@ -136,7 +136,10 @@ export class ExpoEncryptedCleanupWorkflowRepository implements CleanupWorkflowRe
         (expectedRevision === null && current !== null) ||
         (expectedRevision !== null && current?.revision !== expectedRevision)
       ) {
-        throw new CleanupWorkflowConflictError(workflowId);
+        throw new CleanupWorkflowConflictError(workflowId, {
+          expected: expectedRevision,
+          actual: current?.revision ?? null,
+        });
       }
       const directory = new Directory(Paths.document, ROOT_DIRECTORY, workflowId);
       if (directory.exists) directory.delete();
@@ -147,15 +150,17 @@ export class ExpoEncryptedCleanupWorkflowRepository implements CleanupWorkflowRe
   }
 
   async listResumable(): Promise<readonly CleanupWorkflowSummary[]> {
+    return (await this.listAll()).filter(({ phase }) => !['completed', 'rolled-back'].includes(phase));
+  }
+
+  async listAll(): Promise<readonly CleanupWorkflowSummary[]> {
     const root = new Directory(Paths.document, ROOT_DIRECTORY);
     if (!root.exists) return [];
     const summaries: CleanupWorkflowSummary[] = [];
     for (const entry of root.list()) {
       if (!(entry instanceof Directory) || entry.name.startsWith('.tmp-')) continue;
       const commit = await this.currentCommit(entry);
-      if (commit && !['completed', 'rolled-back'].includes(commit.phase)) {
-        summaries.push(summary(commit));
-      }
+      if (commit) summaries.push(summary(commit));
     }
     return summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
@@ -177,7 +182,11 @@ export class ExpoEncryptedCleanupWorkflowRepository implements CleanupWorkflowRe
       (expectedRevision !== null && existing?.revision !== expectedRevision) ||
       workflow.revision !== (expectedRevision === null ? 0 : expectedRevision + 1)
     ) {
-      throw new CleanupWorkflowConflictError(workflow.id);
+      throw new CleanupWorkflowConflictError(workflow.id, {
+        expected: expectedRevision,
+        actual: existing?.revision ?? null,
+        attempted: workflow.revision,
+      });
     }
     if (!(await SecureStore.isAvailableAsync())) throw new CleanupWorkflowKeyUnavailableError();
 

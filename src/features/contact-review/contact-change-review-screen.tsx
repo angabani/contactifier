@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, FlatList, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
+import * as Device from 'expo-device';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   createBeautificationChangeSet,
+  carryForwardChangeDecisions,
+  createContactWriteConfirmation,
+  isPerChangeCleanupWorkflow,
   setChangeDecision,
   summarizeChangeDecisions,
   type ReviewDecision,
@@ -23,6 +27,14 @@ import {
 } from '@/domain';
 import { prepareDeviceContactWrite } from '@/composition/device-contact-scan';
 import { manageCleanupWorkflow } from '@/composition/cleanup-workflow';
+import {
+  executeSimulatorFixtureTransactions,
+  executeSimulatorFixtureWrite,
+  recoverInterruptedSimulatorFixtureWrite,
+  resumeSimulatorFixtureVerification,
+  resumeSimulatorFixtureFinalization,
+  type SimulatorTransactionBatchResult,
+} from '@/composition/simulator-contact-write';
 import { useDeviceContactScanSession } from '@/features/contact-import/use-device-contact-scan';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -78,6 +90,75 @@ function ChangeCard({
   const theme = useTheme();
   const before = change.kind === 'merge' ? change.before : [change.before];
   const after = change.kind === 'delete' ? undefined : change.after;
+
+  if (change.kind === 'merge') {
+    const initial = (change.after.name?.givenName ?? change.after.displayName ?? '?')
+      .trim().charAt(0).toLocaleUpperCase();
+    const mergedValues = contactReviewValues(change.after);
+    return (
+      <ThemedView style={styles.mergeCard}>
+        <View style={styles.mergeHero}>
+          <ThemedText type="smallBold" themeColor="textSecondary">MERGE CONTACT</ThemedText>
+          <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}>
+            <ThemedText style={[styles.avatarText, { color: theme.primary }]}>{initial}</ThemedText>
+          </View>
+          <ThemedText type="subtitle" style={styles.mergeName}>{change.after.displayName}</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {change.reasons.join(' · ')} · {Math.round(change.confidence * 100)}% confidence
+          </ThemedText>
+        </View>
+
+        <View style={styles.nativeSection}>
+          <ThemedText type="subtitle" themeColor="textSecondary">Duplicate contacts found</ThemedText>
+          <ThemedView type="backgroundElement" style={styles.nativeGroup}>
+            {before.map((contact, index) => (
+              <View key={contact.id} style={[styles.sourceRow, index > 0 && styles.nativeDivider]}>
+                <View style={styles.sourceCopy}>
+                  <ThemedText type="smallBold">{contact.displayName || 'Unnamed contact'}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {contact.recordRef.source.kind === 'device' ? 'iPhone' : contact.recordRef.source.kind}
+                  </ThemedText>
+                </View>
+                <ThemedText style={styles.chevron}>›</ThemedText>
+              </View>
+            ))}
+          </ThemedView>
+        </View>
+
+        <View style={styles.nativeSection}>
+          <View style={styles.sectionHeadingRow}>
+            <ThemedText type="subtitle" themeColor="textSecondary">Merged contact information</ThemedText>
+            <ThemedText type="smallBold" style={{ color: theme.primary }}>All values</ThemedText>
+          </View>
+          <ThemedView type="backgroundElement" style={styles.nativeGroup}>
+            {mergedValues.length > 0 ? mergedValues.map((item, index) => (
+              <View key={item.id} style={[styles.mergedValueRow, index > 0 && styles.nativeDivider]}>
+                <ThemedText selectable>{item.value}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">{item.label}</ThemedText>
+              </View>
+            )) : (
+              <ThemedText type="small" themeColor="textSecondary">No phone numbers or emails</ThemedText>
+            )}
+          </ThemedView>
+        </View>
+
+        <View style={styles.mergeActions}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => onDecision('accepted')}
+            style={[styles.mergePrimaryButton, { backgroundColor: theme.primary }]}>
+            <ThemedText style={styles.selectedDecisionText}>Merge</ThemedText>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => onDecision('rejected')} style={styles.mergeTextButton}>
+            <ThemedText type="smallBold" style={{ color: theme.primary }}>Ignore</ThemedText>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => onDecision('skipped')} style={styles.mergeTextButton}>
+            <ThemedText type="smallBold" themeColor="textSecondary">Decide later</ThemedText>
+          </Pressable>
+        </View>
+      </ThemedView>
+    );
+  }
 
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
@@ -146,18 +227,108 @@ function ChangeCard({
   );
 }
 
+function ExecutionConfirmationSheet({
+  visible,
+  confirmation,
+  isExecuting,
+  onCancel,
+  onConfirm,
+}: {
+  readonly visible: boolean;
+  readonly confirmation: ReturnType<typeof createContactWriteConfirmation>;
+  readonly isExecuting: boolean;
+  readonly onCancel: () => void;
+  readonly onConfirm: () => void;
+}) {
+  const theme = useTheme();
+  const row = (label: string, value: number, danger = false) => (
+    <View style={styles.confirmationRow}>
+      <ThemedText themeColor="textSecondary">{label}</ThemedText>
+      <ThemedText type="smallBold" themeColor={danger ? 'danger' : 'text'}>{value}</ThemedText>
+    </View>
+  );
+  return (
+    <Modal
+      animationType="slide"
+      presentationStyle="pageSheet"
+      visible={visible}
+      onRequestClose={onCancel}>
+      <ThemedView style={styles.confirmationScreen}>
+        <SafeAreaView style={styles.confirmationSafeArea}>
+          <View style={styles.confirmationHeader}>
+            <Pressable accessibilityRole="button" disabled={isExecuting} onPress={onCancel}>
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>Cancel</ThemedText>
+            </Pressable>
+            <ThemedText type="subtitle">Confirm changes</ThemedText>
+            <View style={styles.confirmationHeaderSpacer} />
+          </View>
+          <View style={styles.confirmationContent}>
+            <ThemedText type="title">Ready to update Contacts?</ThemedText>
+            <ThemedText themeColor="textSecondary">
+              Review the exact merged results on the previous screen. Each accepted change will run
+              as an independently verified transaction.
+            </ThemedText>
+            <ThemedView type="backgroundElement" style={styles.confirmationCard}>
+              {row('Accepted transactions', confirmation.acceptedTransactionCount)}
+              {row('Contacts to create', confirmation.createCount)}
+              {row('Contacts to update', confirmation.updateCount)}
+              {row('Contacts to delete', confirmation.deleteCount, confirmation.hasDestructiveImpact)}
+              {row('Rollback steps prepared', confirmation.rollbackStepCount)}
+            </ThemedView>
+            <ThemedView type="backgroundElement" style={styles.confirmationCard}>
+              <ThemedText
+                type="smallBold"
+                themeColor={confirmation.hasVerifiedBackup ? 'success' : 'danger'}>
+                {confirmation.hasVerifiedBackup
+                  ? 'Verified encrypted backup available'
+                  : 'Verified backup unavailable'}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Contactifier will reread native results before completion. Failed transactions use
+                their prepared rollback steps without reversing unrelated transactions.
+              </ThemedText>
+            </ThemedView>
+          </View>
+          <View style={styles.confirmationFooter}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={isExecuting || !confirmation.hasVerifiedBackup}
+              onPress={onConfirm}
+              style={[
+                styles.confirmationButton,
+                { backgroundColor: theme.primary },
+                (isExecuting || !confirmation.hasVerifiedBackup) && styles.disabled,
+              ]}>
+              {isExecuting
+                ? <ActivityIndicator color="#FFFFFF" />
+                : <ThemedText style={styles.applyText}>Confirm and apply</ThemedText>}
+            </Pressable>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.footerNote}>
+              Confirm every time is enabled.
+            </ThemedText>
+          </View>
+        </SafeAreaView>
+      </ThemedView>
+    </Modal>
+  );
+}
+
 function ReadyReview({
   initialChangeSet,
   initialPlan,
   isDemo,
   onPrepare,
   onReview,
+  onExecute,
+  verifiedBackupId,
 }: {
   readonly initialChangeSet: ChangeSet;
   readonly initialPlan?: ContactWritePlan;
   readonly isDemo: boolean;
   readonly onPrepare: (changeSet: ChangeSet) => Promise<ContactWritePlan>;
   readonly onReview: (changeSet: ChangeSet) => Promise<void>;
+  readonly onExecute?: (plan: ContactWritePlan) => Promise<SimulatorTransactionBatchResult>;
+  readonly verifiedBackupId?: string;
 }) {
   const router = useRouter();
   const theme = useTheme();
@@ -167,7 +338,28 @@ function ReadyReview({
   const [isSaving, setIsSaving] = useState(false);
   const [prepareError, setPrepareError] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const executionInFlight = useRef(false);
+  const [executionResult, setExecutionResult] = useState<SimulatorTransactionBatchResult | null>(null);
+  const [executionError, setExecutionError] = useState<string | null>(null);
+  const [isConfirmingExecution, setIsConfirmingExecution] = useState(false);
+  const [selectedMergeId, setSelectedMergeId] = useState<string | null>(null);
   const counts = useMemo(() => summarizeChangeDecisions(changeSet), [changeSet]);
+  const visibleChanges = useMemo(
+    () => changeSet.changes.filter(({ decision }) => decision !== 'rejected'),
+    [changeSet],
+  );
+  const mergeChanges = useMemo(
+    () => visibleChanges.filter((change): change is Extract<ProposedChange, { kind: 'merge' }> => change.kind === 'merge'),
+    [visibleChanges],
+  );
+  const selectedMerge = mergeChanges.find(({ id }) => id === selectedMergeId);
+  const confirmation = plan
+    ? createContactWriteConfirmation({ changeSet, plan, verifiedBackupId })
+    : null;
+  const listChanges = selectedMerge
+    ? [selectedMerge]
+    : visibleChanges.filter(({ kind }) => kind !== 'merge');
 
   const decide = async (changeId: string, decision: ReviewDecision) => {
     const next = setChangeDecision(changeSet, changeId, decision);
@@ -175,6 +367,22 @@ function ReadyReview({
     setSaveError(false);
     setPlan(null);
     setPrepareError(false);
+    try {
+      await onReview(next);
+      setChangeSet(next);
+    } catch {
+      setSaveError(true);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const decideAllMerges = async (decision: Extract<ReviewDecision, 'accepted' | 'rejected'>) => {
+    let next = changeSet;
+    for (const change of mergeChanges) next = setChangeDecision(next, change.id, decision);
+    setIsSaving(true);
+    setSaveError(false);
+    setPlan(null);
     try {
       await onReview(next);
       setChangeSet(next);
@@ -198,23 +406,44 @@ function ReadyReview({
     }
   };
 
+  const execute = async () => {
+    if (!plan || !onExecute || executionInFlight.current) return;
+    executionInFlight.current = true;
+    setIsExecuting(true);
+    setExecutionError(null);
+    try {
+      const result = await onExecute(plan);
+      setExecutionResult(result);
+    } catch (error) {
+      setExecutionError(error instanceof Error ? error.message : 'Simulator execution failed.');
+    } finally {
+      executionInFlight.current = false;
+      setIsExecuting(false);
+    }
+  };
+
   return (
     <FlatList
-      data={changeSet.changes}
+      data={listChanges}
       keyExtractor={({ id }) => id}
       contentContainerStyle={styles.listContent}
       ListHeaderComponent={
         <View style={styles.header}>
-          <Pressable accessibilityRole="button" onPress={() => router.back()} hitSlop={12}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => selectedMergeId ? setSelectedMergeId(null) : router.back()}
+            hitSlop={12}>
             <ThemedText type="smallBold" style={{ color: theme.primary }}>
-              Back
+              {selectedMergeId ? 'Duplicates' : 'Cancel'}
             </ThemedText>
           </Pressable>
           <ThemedText type="title" style={styles.title}>
-            Review suggested changes
+            {selectedMerge ? 'Merge Contact' : 'Duplicates Found'}
           </ThemedText>
           <ThemedText themeColor="textSecondary">
-            Nothing changes until you review every suggestion and explicitly confirm it.
+            {selectedMerge
+              ? 'Review every value that will remain before choosing Merge.'
+              : 'Review duplicate groups individually or make one explicit bulk decision.'}
           </ThemedText>
           {isDemo && (
             <View style={[styles.demoNotice, { borderColor: theme.primary }]}>
@@ -226,34 +455,74 @@ function ReadyReview({
               </ThemedText>
             </View>
           )}
-          <ThemedView type="backgroundElement" style={styles.summary}>
+          {!selectedMerge && <ThemedView type="backgroundElement" style={styles.summary}>
             <ThemedText type="smallBold">{counts.accepted} accepted</ThemedText>
             <ThemedText type="smallBold">{counts.rejected} rejected</ThemedText>
             <ThemedText type="smallBold">{counts.skipped} later</ThemedText>
             <ThemedText type="smallBold" style={{ color: theme.primary }}>
               {counts.pending} pending
             </ThemedText>
-          </ThemedView>
+          </ThemedView>}
+          {!selectedMerge && mergeChanges.length > 0 && (
+            <>
+              <ThemedView type="backgroundElement" style={styles.duplicateGroup}>
+                {mergeChanges.map((change, index) => (
+                  <Pressable
+                    accessibilityRole="button"
+                    key={change.id}
+                    onPress={() => setSelectedMergeId(change.id)}
+                    style={[styles.duplicateRow, index > 0 && styles.nativeDivider]}>
+                    <View style={styles.sourceCopy}>
+                      <ThemedText type="smallBold">{change.after.displayName || 'Unnamed contact'}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {change.before.length} contact cards found
+                      </ThemedText>
+                    </View>
+                    <ThemedText style={styles.chevron}>›</ThemedText>
+                  </Pressable>
+                ))}
+              </ThemedView>
+              <View style={styles.bulkActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isSaving}
+                  onPress={() => void decideAllMerges('accepted')}
+                  style={[styles.mergePrimaryButton, { backgroundColor: theme.primary }, isSaving && styles.disabled]}>
+                  <ThemedText style={styles.selectedDecisionText}>Merge All</ThemedText>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isSaving}
+                  onPress={() => void decideAllMerges('rejected')}
+                  style={styles.mergeTextButton}>
+                  <ThemedText type="smallBold" style={{ color: theme.primary }}>Ignore All</ThemedText>
+                </Pressable>
+              </View>
+            </>
+          )}
         </View>
       }
-      ListEmptyComponent={
+      ListEmptyComponent={visibleChanges.length === 0 ? (
         <ThemedView type="backgroundElement" style={styles.emptyCard}>
           <ThemedText type="smallBold">No changes need review</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            The exact duplicate scan did not create any proposals.
+            No pending or later suggestions remain. Rejected unchanged suggestions stay hidden.
           </ThemedText>
         </ThemedView>
-      }
+      ) : null}
       renderItem={({ item }) => (
         <ChangeCard
           change={item}
           onDecision={(decision) => {
-            if (!isSaving) void decide(item.id, decision);
+            if (!isSaving) {
+              void decide(item.id, decision);
+              if (item.kind === 'merge') setSelectedMergeId(null);
+            }
           }}
         />
       )}
       ListFooterComponent={
-        changeSet.changes.length > 0 ? (
+        visibleChanges.length > 0 && !selectedMerge ? (
           <View style={styles.footer}>
             {plan && (
               <ThemedView type="backgroundElement" style={styles.planCard}>
@@ -270,6 +539,25 @@ function ReadyReview({
                   {plan.compensations.length} rollback steps prepared in reverse order.
                 </ThemedText>
               </ThemedView>
+            )}
+            {executionResult && (
+              <ThemedView type="backgroundElement" style={styles.planCard}>
+                <ThemedText type="smallBold" themeColor={executionResult.attentionCount === 0 ? 'success' : 'danger'}>
+                  Independent transactions finished
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {executionResult.completedCount} completed · {executionResult.rolledBackCount} rolled back · {executionResult.attentionCount} need attention.
+                  Each change has its own encrypted journal and compensation plan.
+                </ThemedText>
+              </ThemedView>
+            )}
+            {executionError && (
+              <View style={[styles.prepareError, { borderColor: theme.danger }]}>
+                <ThemedText type="smallBold">Simulator execution was rejected</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {executionError}
+                </ThemedText>
+              </View>
             )}
             {prepareError && (
               <View style={[styles.prepareError, { borderColor: theme.danger }]}>
@@ -316,8 +604,32 @@ function ReadyReview({
               )}
             </Pressable>
             <ThemedText type="small" themeColor="textSecondary" style={styles.footerNote}>
-              Review every suggestion and accept at least one. Actual contact writes remain disabled.
+              Review every suggestion and accept at least one. Production and physical-device writes remain disabled.
             </ThemedText>
+            {plan && onExecute && !executionResult && (
+              <Pressable
+                accessibilityRole="button"
+                disabled={isExecuting}
+                onPress={() => setIsConfirmingExecution(true)}
+                style={[styles.simulatorExecuteButton, isExecuting && styles.disabled]}>
+                {isExecuting ? (
+                  <ActivityIndicator color="#B42318" />
+                ) : (
+                  <ThemedText type="smallBold" themeColor="danger">Apply to owned simulator fixtures</ThemedText>
+                )}
+              </Pressable>
+            )}
+            {confirmation && (
+              <ExecutionConfirmationSheet
+                visible={isConfirmingExecution}
+                confirmation={confirmation}
+                isExecuting={isExecuting}
+                onCancel={() => setIsConfirmingExecution(false)}
+                onConfirm={() => {
+                  void execute().finally(() => setIsConfirmingExecution(false));
+                }}
+              />
+            )}
           </View>
         ) : null
       }
@@ -328,7 +640,7 @@ function ReadyReview({
 export function ContactChangeReviewScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const { state } = useDeviceContactScanSession();
+  const { state, invalidateScan } = useDeviceContactScanSession();
   const generatedChangeSet = useMemo(
     () =>
       state.status === 'success'
@@ -344,6 +656,9 @@ export function ContactChangeReviewScreen() {
   const [workflow, setWorkflow] = useState<CleanupWorkflow | null>(null);
   const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(true);
   const [workflowLoadError, setWorkflowLoadError] = useState(false);
+  const [isRecoveringWrite, setIsRecoveringWrite] = useState(false);
+  const recoveryInFlight = useRef(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -364,11 +679,18 @@ export function ContactChangeReviewScreen() {
           }
         }
         if (state.status === 'success' && state.mode === 'device' && generatedChangeSet) {
+          const history: CleanupWorkflow[] = [];
+          for (const summary of (await manageCleanupWorkflow.listHistory()).slice(0, 50)) {
+            if (!['completed', 'failed', 'rolled-back'].includes(summary.phase)) continue;
+            const saved = await manageCleanupWorkflow.load(summary.id);
+            if (saved) history.push(saved);
+          }
+          const carriedChangeSet = carryForwardChangeDecisions(generatedChangeSet, history);
           const started = await manageCleanupWorkflow.start({
             source: state.snapshot.source,
             snapshotId: state.snapshot.id,
             backupId: state.backup.id,
-            changeSet: generatedChangeSet,
+            changeSet: carriedChangeSet,
           });
           if (active) setWorkflow(started);
         }
@@ -410,6 +732,85 @@ export function ContactChangeReviewScreen() {
     if (workflow) setWorkflow(await manageCleanupWorkflow.preflight(workflow, plan));
     return plan;
   };
+  const execute = async (plan: ContactWritePlan): Promise<SimulatorTransactionBatchResult> => {
+    if (!workflow || workflow.writePlan?.changeSetId !== plan.changeSetId) {
+      throw new Error('Persisted simulator preflight is unavailable.');
+    }
+    const result = isPerChangeCleanupWorkflow(workflow)
+      ? (() => executeSimulatorFixtureWrite(workflow).then((transaction) => ({
+          transactions: [transaction],
+          completedCount: transaction.phase === 'completed' ? 1 : 0,
+          rolledBackCount: transaction.phase === 'rolled-back' ? 1 : 0,
+          attentionCount: ['completed', 'rolled-back'].includes(transaction.phase) ? 0 : 1,
+        })))()
+      : executeSimulatorFixtureTransactions(workflow);
+    const settled = await result;
+    invalidateScan();
+    return settled;
+  };
+  const simulatorExecutionEnabled =
+    __DEV__ &&
+    Platform.OS === 'ios' &&
+    !Device.isDevice &&
+    state.status === 'success' &&
+    state.mode === 'device' &&
+    workflow?.phase === 'preflighted';
+  const simulatorRecoveryEnabled =
+    __DEV__ && Platform.OS === 'ios' && !Device.isDevice && state.status === 'success' && state.mode === 'device';
+  const recoverInterruptedWrite = async () => {
+    if (!workflow || recoveryInFlight.current) return;
+    recoveryInFlight.current = true;
+    setIsRecoveringWrite(true);
+    setRecoveryError(null);
+    try {
+      setWorkflow(await recoverInterruptedSimulatorFixtureWrite(workflow));
+    } catch (error) {
+      setRecoveryError(error instanceof Error ? error.message : 'Recovery failed unexpectedly.');
+    } finally {
+      recoveryInFlight.current = false;
+      setIsRecoveringWrite(false);
+    }
+  };
+  const resumeVerification = async () => {
+    if (!workflow || recoveryInFlight.current) return;
+    recoveryInFlight.current = true;
+    const attemptedRevision = workflow.revision;
+    setIsRecoveringWrite(true);
+    setRecoveryError(null);
+    try {
+      setWorkflow(await resumeSimulatorFixtureVerification(workflow));
+    } catch (error) {
+      const latest = await manageCleanupWorkflow.load(workflow.id).catch(() => null);
+      if (latest && latest.revision !== attemptedRevision) {
+        setWorkflow(latest);
+      } else {
+        setRecoveryError(error instanceof Error ? error.message : 'Verification recovery failed unexpectedly.');
+      }
+    } finally {
+      recoveryInFlight.current = false;
+      setIsRecoveringWrite(false);
+    }
+  };
+  const returnToFreshScan = () => {
+    invalidateScan();
+    router.replace('/');
+  };
+  const resumeFinalization = async () => {
+    if (!workflow || recoveryInFlight.current) return;
+    recoveryInFlight.current = true;
+    setIsRecoveringWrite(true);
+    setRecoveryError(null);
+    try {
+      const result = await resumeSimulatorFixtureFinalization(workflow);
+      setWorkflow(result);
+      if (result.phase === 'completed' || result.phase === 'rolled-back') invalidateScan();
+    } catch (error) {
+      setRecoveryError(error instanceof Error ? error.message : 'Finalization recovery failed unexpectedly.');
+    } finally {
+      recoveryInFlight.current = false;
+      setIsRecoveringWrite(false);
+    }
+  };
 
   return (
     <ThemedView style={styles.screen}>
@@ -432,6 +833,89 @@ export function ContactChangeReviewScreen() {
               </ThemedText>
             </Pressable>
           </View>
+        ) : workflow?.phase === 'finalizing' && simulatorRecoveryEnabled ? (
+          <View style={styles.missingState}>
+            <ThemedText type="subtitle">Finish transaction</ThemedText>
+            <ThemedText themeColor="textSecondary">
+              Native verification passed. Contactifier will finish durable bookkeeping and remove
+              any temporary reconciliation markers. Contact writes will not be repeated.
+            </ThemedText>
+            {recoveryError && <ThemedText type="small" themeColor="danger">{recoveryError}</ThemedText>}
+            <Pressable accessibilityRole="button" disabled={isRecoveringWrite} onPress={() => void resumeFinalization()}
+              style={[styles.applyButton, { backgroundColor: theme.primary }, isRecoveringWrite && styles.disabled]}>
+              {isRecoveringWrite ? <ActivityIndicator color="#FFFFFF" /> : <ThemedText style={styles.applyText}>Finish transaction</ThemedText>}
+            </Pressable>
+          </View>
+        ) : workflow?.phase === 'verifying' && simulatorRecoveryEnabled ? (
+          <View style={styles.missingState}>
+            <ThemedText type="subtitle">Finish verifying transaction</ThemedText>
+            <ThemedText themeColor="textSecondary">
+              All planned writes were recorded. Contactifier must verify their native results before
+              it can complete the transaction or roll it back. Review decisions are locked.
+            </ThemedText>
+            {recoveryError && <ThemedText type="small" themeColor="danger">{recoveryError}</ThemedText>}
+            <Pressable accessibilityRole="button" disabled={isRecoveringWrite} onPress={() => void resumeVerification()}
+              style={[styles.applyButton, { backgroundColor: theme.primary }, isRecoveringWrite && styles.disabled]}>
+              {isRecoveringWrite ? <ActivityIndicator color="#FFFFFF" /> : <ThemedText style={styles.applyText}>Resume verification</ThemedText>}
+            </Pressable>
+          </View>
+        ) : workflow?.phase === 'applying' && simulatorRecoveryEnabled ? (
+          <View style={styles.missingState}>
+            <ThemedText type="subtitle">Interrupted simulator transaction</ThemedText>
+            <ThemedText themeColor="textSecondary">
+              Contactifier recorded a write start but not its outcome. It will reread the exact
+              fixture contact before deciding whether rollback is required. The write will not be retried.
+            </ThemedText>
+            {recoveryError && (
+              <ThemedText type="small" themeColor="danger">
+                {recoveryError}
+              </ThemedText>
+            )}
+            <Pressable
+              accessibilityRole="button"
+              disabled={isRecoveringWrite}
+              onPress={() => void recoverInterruptedWrite()}
+              style={[styles.applyButton, { backgroundColor: theme.primary }, isRecoveringWrite && styles.disabled]}>
+              {isRecoveringWrite ? <ActivityIndicator color="#FFFFFF" /> : (
+                <ThemedText style={styles.applyText}>Reconcile interrupted write</ThemedText>
+              )}
+            </Pressable>
+          </View>
+        ) : workflow?.phase === 'completed' ? (
+          <View style={styles.missingState}>
+            <ThemedText type="subtitle">Transaction completed</ThemedText>
+            <ThemedText themeColor="textSecondary">
+              Contactifier applied and verified {workflow.changeSet.changes.filter(({ decision }) => decision === 'accepted').length} accepted changes.
+              The previous scan is now closed so it cannot be applied again.
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Your encrypted transaction journal and verified backup remain available for rollback.
+            </ThemedText>
+            <Pressable
+              accessibilityRole="button"
+              onPress={returnToFreshScan}
+              style={[styles.applyButton, { backgroundColor: theme.primary }]}>
+              <ThemedText style={styles.applyText}>Scan remaining contacts</ThemedText>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => router.push('/activity' as never)}>
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>View activity</ThemedText>
+            </Pressable>
+          </View>
+        ) : workflow?.phase === 'rolled-back' ? (
+          <View style={styles.missingState}>
+            <ThemedText type="subtitle">Interrupted transaction recovered</ThemedText>
+            <ThemedText themeColor="textSecondary">
+              The uncertain write was reconciled and the transaction is rolled back. This saved
+              plan is closed and cannot be executed again. Scan the native directory to create a
+              fresh verified backup and review.
+            </ThemedText>
+            <Pressable
+              accessibilityRole="button"
+              onPress={returnToFreshScan}
+              style={[styles.applyButton, { backgroundColor: theme.primary }]}>
+              <ThemedText style={styles.applyText}>Return to scan</ThemedText>
+            </Pressable>
+          </View>
         ) : changeSet ? (
           <ReadyReview
             initialChangeSet={changeSet}
@@ -439,6 +923,8 @@ export function ContactChangeReviewScreen() {
             isDemo={state.status === 'success' && state.mode === 'demo'}
             onPrepare={prepare}
             onReview={saveReview}
+            onExecute={simulatorExecutionEnabled ? execute : undefined}
+            verifiedBackupId={state.status === 'success' ? state.backup.id : undefined}
           />
         ) : (
           <View style={styles.missingState}>
@@ -486,6 +972,25 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
   },
   card: { padding: Spacing.three, borderRadius: Spacing.three, gap: Spacing.three },
+  mergeCard: { gap: Spacing.four, paddingVertical: Spacing.two },
+  mergeHero: { alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.two },
+  avatar: { width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { fontSize: 42, lineHeight: 50, fontWeight: '500' },
+  mergeName: { textAlign: 'center', fontSize: 28, lineHeight: 34 },
+  nativeSection: { gap: Spacing.two },
+  sectionHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  nativeGroup: { borderRadius: Spacing.three, paddingHorizontal: Spacing.three, overflow: 'hidden' },
+  duplicateGroup: { borderRadius: Spacing.three, paddingHorizontal: Spacing.three, overflow: 'hidden' },
+  duplicateRow: { minHeight: 76, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
+  bulkActions: { gap: Spacing.one, paddingTop: Spacing.two },
+  sourceRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
+  sourceCopy: { flex: 1, gap: Spacing.half },
+  chevron: { color: '#AEAEB2', fontSize: 32, lineHeight: 34, fontWeight: '300' },
+  nativeDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#C7C7CC' },
+  mergedValueRow: { minHeight: 66, justifyContent: 'center', gap: Spacing.half, paddingVertical: Spacing.two },
+  mergeActions: { gap: Spacing.one, paddingTop: Spacing.one },
+  mergePrimaryButton: { minHeight: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  mergeTextButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.three },
   cardHeading: { flex: 1, gap: Spacing.one },
   comparison: { flexDirection: 'row', gap: Spacing.three },
@@ -522,6 +1027,42 @@ const styles = StyleSheet.create({
   },
   disabled: { opacity: 0.45 },
   applyText: { color: '#FFFFFF', fontWeight: '700' },
+  simulatorExecuteButton: {
+    minHeight: 54,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#B42318',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmationScreen: { flex: 1 },
+  confirmationSafeArea: { flex: 1 },
+  confirmationHeader: {
+    minHeight: 56,
+    paddingHorizontal: Spacing.four,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  confirmationHeaderSpacer: { width: 48 },
+  confirmationContent: {
+    flex: 1,
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    alignSelf: 'center',
+    padding: Spacing.four,
+    gap: Spacing.three,
+  },
+  confirmationCard: { padding: Spacing.three, borderRadius: Spacing.three, gap: Spacing.two },
+  confirmationRow: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.three },
+  confirmationFooter: {
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    alignSelf: 'center',
+    padding: Spacing.four,
+    gap: Spacing.two,
+  },
+  confirmationButton: { minHeight: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   footerNote: { textAlign: 'center' },
   missingState: {
     flex: 1,

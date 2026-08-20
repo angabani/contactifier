@@ -134,6 +134,7 @@ describe('Expo iOS contact writer boundary', () => {
     expect(mapped).not.toHaveProperty('groups');
     expect(mapped.image).toBeUndefined();
     expect(mapCanonicalContactToExpoPatch(contact('native-a'))).not.toHaveProperty('image');
+    expect(mapCanonicalContactToExpoPatch(contact('native-a'))).not.toHaveProperty('birthday');
   });
 
   it('returns the iOS identifier after create', async () => {

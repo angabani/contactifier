@@ -1,5 +1,6 @@
 import {
   compensationsForExecutedOperations,
+  splitContactWritePlanByChange,
   ContactWritePlanError,
   createChangeSet,
   createConfidenceScore,
@@ -177,6 +178,44 @@ describe('dry-run contact write plan', () => {
     expect(
       compensationsForExecutedOperations(plan, executedIds).map(({ kind }) => kind),
     ).toEqual(['recreate-deleted', 'restore-update']);
+  });
+
+  it('creates an independently compensatable plan for every accepted change', () => {
+    const plan = createDryRunContactWritePlan({
+      analyzedSnapshot: analyzed,
+      freshSnapshot: snapshot('fresh', [a, b, c, d]),
+      backup: backup(analyzed),
+      changeSet: changes([update, remove, merge]),
+      plannedAt: at,
+    });
+
+    const transactions = splitContactWritePlanByChange(plan);
+
+    expect(transactions.map(({ changeId }) => changeId)).toEqual([
+      'update-a',
+      'merge-c-d',
+      'delete-b',
+    ]);
+    expect(transactions.map(({ transactionId }) => transactionId)).toEqual([
+      `${plan.changeSetId}:update-a`,
+      `${plan.changeSetId}:merge-c-d`,
+      `${plan.changeSetId}:delete-b`,
+    ]);
+    expect(transactions.map(({ createCount, updateCount, deleteCount }) => ({
+      createCount,
+      updateCount,
+      deleteCount,
+    }))).toEqual([
+      { createCount: 0, updateCount: 1, deleteCount: 0 },
+      { createCount: 0, updateCount: 1, deleteCount: 1 },
+      { createCount: 0, updateCount: 0, deleteCount: 1 },
+    ]);
+    for (const transaction of transactions) {
+      expect(transaction.compensations).toHaveLength(transaction.operations.length);
+      expect(new Set(transaction.operations.map(({ changeId }) => changeId))).toEqual(
+        new Set([transaction.changeId]),
+      );
+    }
   });
 
   it('performs a fresh source read immediately before producing the plan', async () => {

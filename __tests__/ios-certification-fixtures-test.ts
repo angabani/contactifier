@@ -1,6 +1,8 @@
 import {
+  IOS_FIXTURE_DATASET_VERSION,
   IOS_FIXTURE_NAME_PREFIX,
   IosCertificationFixtureManager,
+  iosFixtureSpecs,
   type IosFixtureCandidate,
   type IosFixtureGateway,
   type IosFixtureRepository,
@@ -37,7 +39,7 @@ describe('IosCertificationFixtureManager', () => {
     const native = gateway();
     native.create.mockImplementationOnce(async () => {
       expect(repository.value?.id).toBe('set-1');
-      expect(repository.value?.fixtures[0].marker).toBe('contactifier://certification-fixture/set-1/merge-a');
+      expect(repository.value?.fixtures[0].marker).toBe('contactifier://certification-fixture/set-1/phone-a');
       throw new Error('unknown native result');
     });
 
@@ -58,7 +60,7 @@ describe('IosCertificationFixtureManager', () => {
     const result = await manager(repository, native).setup();
 
     expect(result.outcome).toBe('ready');
-    expect(native.create).toHaveBeenCalledTimes(2); // failed A, then creates B only
+    expect(native.create.mock.calls.filter(([spec]) => spec.key === fixture.key)).toHaveLength(1);
     expect(repository.value?.fixtures[0].nativeContactId).toBe('recovered');
   });
 
@@ -113,5 +115,27 @@ describe('IosCertificationFixtureManager', () => {
     const native = gateway();
     await manager(repository, native).setup();
     expect(repository.value?.fixtures.every(({ givenName }) => givenName.startsWith(IOS_FIXTURE_NAME_PREFIX))).toBe(true);
+  });
+
+  it('defines a versioned dataset covering positive, negative, conflict, and rich cases', () => {
+    const fixtures = iosFixtureSpecs('matrix');
+
+    expect(IOS_FIXTURE_DATASET_VERSION).toBe(2);
+    expect(fixtures).toHaveLength(15);
+    expect(new Set(fixtures.map(({ key }) => key)).size).toBe(fixtures.length);
+    expect(new Set(fixtures.map(({ scenario }) => scenario))).toEqual(new Set([
+      'Exact normalized phone',
+      'Case-insensitive email',
+      'Phone and email match',
+      'Non-transitive merge guard',
+      'Conflicting identity',
+      'Incomplete contact',
+      'Unique negative control',
+      'Rich multi-value merge',
+    ]));
+    expect(fixtures.find(({ key }) => key === 'rich-a')).toMatchObject({
+      company: 'Contactifier Labs',
+      phones: expect.arrayContaining([{ label: 'work', value: '+1 303 555 0501' }]),
+    });
   });
 });
