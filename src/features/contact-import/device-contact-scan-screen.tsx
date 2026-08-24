@@ -55,13 +55,18 @@ export function DeviceContactScanScreen() {
                 <ThemedText style={[styles.brandLetter, { color: theme.primary }]}>C</ThemedText>
               </View>
               {!isWeb && (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Open transaction activity and Undo"
-                  onPress={() => router.push('/activity' as never)}
-                  style={[styles.activityButton, { borderColor: theme.primary }]}>
-                  <ThemedText type="smallBold" style={{ color: theme.primary }}>Activity &amp; Undo</ThemedText>
-                </Pressable>
+                <View style={styles.topActions}>
+                  <Pressable accessibilityRole="button" onPress={() => router.push('/settings' as never)}>
+                    <ThemedText type="smallBold" style={{ color: theme.primary }}>Settings</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Open transaction activity and Undo"
+                    onPress={() => router.push('/activity' as never)}
+                    style={[styles.activityButton, { borderColor: theme.primary }]}>
+                    <ThemedText type="smallBold" style={{ color: theme.primary }}>Activity &amp; Undo</ThemedText>
+                  </Pressable>
+                </View>
               )}
             </View>
 
@@ -429,6 +434,7 @@ const styles = StyleSheet.create({
     gap: Spacing.four,
   },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.three },
+  topActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   activityButton: {
     minHeight: 44,
     borderWidth: 1,

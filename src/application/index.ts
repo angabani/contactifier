@@ -29,6 +29,12 @@ export type {
   VerifiedBackupStore,
 } from './ports/verified-backup-store';
 export {
+  defaultContactConfirmationPreferences,
+  type ContactConfirmationPreferenceRepository,
+  type ContactConfirmationPreferences,
+  type ContactConfirmationType,
+} from './ports/contact-confirmation-preference-repository';
+export {
   CreateContactBackup,
   type CreateContactBackupRequest,
 } from './use-cases/create-contact-backup';
@@ -85,6 +91,15 @@ export {
   createContactWriteConfirmation,
   type ContactWriteConfirmation,
 } from './use-cases/create-contact-write-confirmation';
+export {
+  acceptedConfirmationTypes,
+  requiresContactConfirmation,
+} from './use-cases/evaluate-contact-confirmation-policy';
+export { resolveMergeConflict } from './use-cases/resolve-merge-conflict';
+export {
+  decorateProposedContact,
+  ContactDecorationConflictError,
+} from './use-cases/decorate-proposed-contact';
 export {
   CreatePerChangeCleanupWorkflows,
   isPerChangeCleanupWorkflow,

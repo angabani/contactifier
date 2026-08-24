@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import * as Device from 'expo-device';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,25 +8,36 @@ import {
   createBeautificationChangeSet,
   carryForwardChangeDecisions,
   createContactWriteConfirmation,
+  acceptedConfirmationTypes,
+  defaultContactConfirmationPreferences,
   isPerChangeCleanupWorkflow,
+  requiresContactConfirmation,
+  resolveMergeConflict,
+  decorateProposedContact,
   setChangeDecision,
   summarizeChangeDecisions,
   type ReviewDecision,
+  type ContactConfirmationPreferences,
+  type ContactConfirmationType,
 } from '@/application';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import {
   createDryRunContactWritePlan,
+  findMergeConflicts,
   type ChangeDecision,
   type ChangeSet,
   type CleanupWorkflow,
   type CanonicalContact,
   type ContactWritePlan,
   type ProposedChange,
+  type MergeConflictField,
+  type ContactDecoration,
 } from '@/domain';
 import { prepareDeviceContactWrite } from '@/composition/device-contact-scan';
 import { manageCleanupWorkflow } from '@/composition/cleanup-workflow';
+import { contactConfirmationPreferences } from '@/composition/contact-confirmation-preferences';
 import {
   executeSimulatorFixtureTransactions,
   executeSimulatorFixtureWrite,
@@ -38,7 +49,7 @@ import {
 import { useDeviceContactScanSession } from '@/features/contact-import/use-device-contact-scan';
 import { useTheme } from '@/hooks/use-theme';
 
-import { contactReviewValues } from './contact-change-presentation';
+import { contactReviewValues, createMergePreviewPresentation } from './contact-change-presentation';
 
 const decisions: readonly ReviewDecision[] = [
   'accepted',
@@ -83,18 +94,33 @@ function ContactDetails({ contact }: { readonly contact: CanonicalContact }) {
 function ChangeCard({
   change,
   onDecision,
+  onResolveConflict,
+  onDecorate,
 }: {
   readonly change: ProposedChange;
   readonly onDecision: (decision: ReviewDecision) => void;
+  readonly onResolveConflict: (field: MergeConflictField, sourceContactId: string) => void;
+  readonly onDecorate: (decoration?: ContactDecoration) => Promise<void>;
 }) {
   const theme = useTheme();
+  const [mergePreviewMode, setMergePreviewMode] = useState<'sources' | 'merged' | 'changes'>(() =>
+    change.kind === 'merge' && findMergeConflicts(change.before).length > 0 ? 'changes' : 'merged');
+  const [decorationKind, setDecorationKind] = useState<ContactDecoration['kind']>(
+    change.decoration?.kind ?? 'honorific');
+  const [decorationValue, setDecorationValue] = useState(change.decoration?.value ?? '');
+  const [decorationError, setDecorationError] = useState<string | null>(null);
   const before = change.kind === 'merge' ? change.before : [change.before];
   const after = change.kind === 'delete' ? undefined : change.after;
 
   if (change.kind === 'merge') {
     const initial = (change.after.name?.givenName ?? change.after.displayName ?? '?')
       .trim().charAt(0).toLocaleUpperCase();
-    const mergedValues = contactReviewValues(change.after);
+    const preview = createMergePreviewPresentation({ sources: change.before, result: change.after });
+    const mergedValues = preview.values;
+    const conflicts = findMergeConflicts(change.before);
+    const unresolvedConflictCount = conflicts.filter(
+      ({ field }) => !change.resolvedConflictFields?.includes(field),
+    ).length;
     return (
       <ThemedView style={styles.mergeCard}>
         <View style={styles.mergeHero}>
@@ -108,24 +134,47 @@ function ChangeCard({
           </ThemedText>
         </View>
 
-        <View style={styles.nativeSection}>
+        <View style={styles.previewModes}>
+          {(['sources', 'merged', 'changes'] as const).map((mode) => {
+            const selected = mergePreviewMode === mode;
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                key={mode}
+                onPress={() => setMergePreviewMode(mode)}
+                style={[styles.previewMode, selected && { backgroundColor: theme.backgroundSelected }]}>
+                <ThemedText type="smallBold" style={selected ? { color: theme.primary } : undefined}>
+                  {mode === 'sources' ? 'Sources' : mode === 'merged' ? 'Merged' : 'Changes'}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {mergePreviewMode === 'sources' && <View style={styles.nativeSection}>
           <ThemedText type="subtitle" themeColor="textSecondary">Duplicate contacts found</ThemedText>
           <ThemedView type="backgroundElement" style={styles.nativeGroup}>
-            {before.map((contact, index) => (
-              <View key={contact.id} style={[styles.sourceRow, index > 0 && styles.nativeDivider]}>
+            {preview.sources.map(({ contact, values }, index) => (
+              <View key={contact.id} style={[styles.sourceDetail, index > 0 && styles.nativeDivider]}>
                 <View style={styles.sourceCopy}>
                   <ThemedText type="smallBold">{contact.displayName || 'Unnamed contact'}</ThemedText>
                   <ThemedText type="small" themeColor="textSecondary">
                     {contact.recordRef.source.kind === 'device' ? 'iPhone' : contact.recordRef.source.kind}
                   </ThemedText>
+                  {values.map((value) => (
+                    <View key={value.id} style={styles.sourceValue}>
+                      <ThemedText selectable>{value.value}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">{value.label}</ThemedText>
+                    </View>
+                  ))}
                 </View>
-                <ThemedText style={styles.chevron}>›</ThemedText>
               </View>
             ))}
           </ThemedView>
-        </View>
+        </View>}
 
-        <View style={styles.nativeSection}>
+        {mergePreviewMode === 'merged' && <View style={styles.nativeSection}>
           <View style={styles.sectionHeadingRow}>
             <ThemedText type="subtitle" themeColor="textSecondary">Merged contact information</ThemedText>
             <ThemedText type="smallBold" style={{ color: theme.primary }}>All values</ThemedText>
@@ -140,13 +189,105 @@ function ChangeCard({
               <ThemedText type="small" themeColor="textSecondary">No phone numbers or emails</ThemedText>
             )}
           </ThemedView>
+        </View>}
+
+        {mergePreviewMode === 'changes' && <View style={styles.nativeSection}>
+          <ThemedText type="subtitle" themeColor="textSecondary">How values will change</ThemedText>
+          <ThemedView type="backgroundElement" style={styles.nativeGroup}>
+            {mergedValues.map((item, index) => (
+              <View key={item.id} style={[styles.changeValueRow, index > 0 && styles.nativeDivider]}>
+                <View style={styles.sourceCopy}>
+                  <ThemedText selectable>{item.value}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    From {item.sourceNames.join(', ') || 'the proposed result'}
+                  </ThemedText>
+                </View>
+                <ThemedText type="smallBold" style={{ color: theme.primary }}>
+                  {item.status === 'duplicate-collapsed' ? 'Duplicate collapsed' : item.status === 'added' ? 'Added' : 'Kept'}
+                </ThemedText>
+              </View>
+            ))}
+          </ThemedView>
+          {conflicts.map((conflict) => (
+            <View key={conflict.field} style={styles.conflictSection}>
+              <ThemedText type="smallBold" themeColor={change.resolvedConflictFields?.includes(conflict.field) ? 'success' : 'danger'}>
+                {conflict.title}{change.resolvedConflictFields?.includes(conflict.field) ? ' · Resolved' : ' · Selection required'}
+              </ThemedText>
+              <ThemedView type="backgroundElement" style={styles.nativeGroup}>
+                {conflict.options.map((option, index) => {
+                  const source = change.before.find(({ id }) => id === option.sourceContactId);
+                  const selected = Boolean(
+                    change.resolvedConflictFields?.includes(conflict.field) && source &&
+                    (conflict.field === 'name'
+                      ? source.displayName === change.after.displayName && JSON.stringify(source.name) === JSON.stringify(change.after.name)
+                      : JSON.stringify(source.organizations) === JSON.stringify(change.after.organizations)),
+                  );
+                  return (
+                    <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected }}
+                      key={option.sourceContactId}
+                      onPress={() => onResolveConflict(conflict.field, option.sourceContactId)}
+                      style={[styles.conflictOption, index > 0 && styles.nativeDivider]}>
+                      <View style={styles.sourceCopy}>
+                        <ThemedText type="smallBold">{option.displayValue}</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">From {option.sourceName}</ThemedText>
+                      </View>
+                      <ThemedText type="smallBold" style={{ color: selected ? theme.primary : theme.backgroundSelected }}>
+                        {selected ? '✓' : '○'}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </ThemedView>
+            </View>
+          ))}
+        </View>}
+
+        <View style={styles.decorationSection}>
+          <ThemedText type="subtitle" themeColor="textSecondary">Optional contact decoration</ThemedText>
+          <View style={styles.decorationKinds}>
+            {(['honorific', 'company', 'designation', 'visible-name-tag'] as const).map((kind) => (
+              <Pressable key={kind} onPress={() => { setDecorationKind(kind); setDecorationError(null); }}
+                style={[styles.decorationKind, { borderColor: decorationKind === kind ? theme.primary : theme.backgroundSelected }]}>
+                <ThemedText type="smallBold" style={decorationKind === kind ? { color: theme.primary } : undefined}>
+                  {kind === 'visible-name-tag' ? 'Name tag' : kind[0].toUpperCase() + kind.slice(1)}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+          <TextInput
+            accessibilityLabel="Decoration value"
+            value={decorationValue}
+            onChangeText={setDecorationValue}
+            placeholder={decorationKind === 'honorific' ? 'Dr., Mr., Ms., Prof.' : 'Enter value'}
+            placeholderTextColor={theme.textSecondary}
+            style={[styles.decorationInput, { color: theme.text, borderColor: theme.backgroundSelected }]}
+          />
+          {decorationKind === 'visible-name-tag' && <ThemedText type="small" themeColor="danger">
+            A visible tag may affect contact sorting, search, caller identification, and sync behavior.
+          </ThemedText>}
+          {decorationError && <ThemedText type="small" themeColor="danger">{decorationError}</ThemedText>}
+          <View style={styles.decorationActions}>
+            <Pressable disabled={!decorationValue.trim()} onPress={() => {
+              setDecorationError(null);
+              void onDecorate({ kind: decorationKind, value: decorationValue }).catch((error) =>
+                setDecorationError(error instanceof Error ? error.message : 'Decoration could not be applied.'));
+            }} style={[styles.decorationApply, { backgroundColor: theme.primary }, !decorationValue.trim() && styles.disabled]}>
+              <ThemedText type="smallBold" style={styles.selectedDecisionText}>Apply decoration</ThemedText>
+            </Pressable>
+            {change.decoration && <Pressable onPress={() => void onDecorate(undefined)}>
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>Remove</ThemedText>
+            </Pressable>}
+          </View>
         </View>
 
         <View style={styles.mergeActions}>
           <Pressable
             accessibilityRole="button"
+            disabled={unresolvedConflictCount > 0}
             onPress={() => onDecision('accepted')}
-            style={[styles.mergePrimaryButton, { backgroundColor: theme.primary }]}>
+            style={[styles.mergePrimaryButton, { backgroundColor: theme.primary }, unresolvedConflictCount > 0 && styles.disabled]}>
             <ThemedText style={styles.selectedDecisionText}>Merge</ThemedText>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={() => onDecision('rejected')} style={styles.mergeTextButton}>
@@ -343,6 +484,10 @@ function ReadyReview({
   const [executionResult, setExecutionResult] = useState<SimulatorTransactionBatchResult | null>(null);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [isConfirmingExecution, setIsConfirmingExecution] = useState(false);
+  const [confirmationPreferences, setConfirmationPreferences] =
+    useState<ContactConfirmationPreferences>(defaultContactConfirmationPreferences);
+  const [sessionConfirmedTypes, setSessionConfirmedTypes] =
+    useState<ReadonlySet<ContactConfirmationType>>(new Set());
   const [selectedMergeId, setSelectedMergeId] = useState<string | null>(null);
   const counts = useMemo(() => summarizeChangeDecisions(changeSet), [changeSet]);
   const visibleChanges = useMemo(
@@ -353,10 +498,28 @@ function ReadyReview({
     () => visibleChanges.filter((change): change is Extract<ProposedChange, { kind: 'merge' }> => change.kind === 'merge'),
     [visibleChanges],
   );
+  const unresolvedMergeCount = mergeChanges.filter((change) => {
+    const resolved = new Set(change.resolvedConflictFields ?? []);
+    return findMergeConflicts(change.before).some(({ field }) => !resolved.has(field));
+  }).length;
   const selectedMerge = mergeChanges.find(({ id }) => id === selectedMergeId);
   const confirmation = plan
     ? createContactWriteConfirmation({ changeSet, plan, verifiedBackupId })
     : null;
+  const confirmationTypes = useMemo(() => acceptedConfirmationTypes(changeSet), [changeSet]);
+  const needsExecutionConfirmation = requiresContactConfirmation({
+    types: confirmationTypes,
+    preferences: confirmationPreferences,
+    sessionConfirmedTypes,
+  });
+
+  useEffect(() => {
+    let active = true;
+    void contactConfirmationPreferences.load()
+      .then((value) => { if (active) setConfirmationPreferences(value); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   const listChanges = selectedMerge
     ? [selectedMerge]
     : visibleChanges.filter(({ kind }) => kind !== 'merge');
@@ -391,6 +554,32 @@ function ReadyReview({
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const resolveConflict = async (
+    changeId: string,
+    field: MergeConflictField,
+    sourceContactId: string,
+  ) => {
+    const next = resolveMergeConflict({ changeSet, changeId, field, sourceContactId });
+    setIsSaving(true);
+    setSaveError(false);
+    setPlan(null);
+    try {
+      await onReview(next);
+      setChangeSet(next);
+    } catch {
+      setSaveError(true);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const decorate = async (changeId: string, decoration?: ContactDecoration) => {
+    const next = decorateProposedContact({ changeSet, changeId, decoration });
+    setPlan(null);
+    await onReview(next);
+    setChangeSet(next);
   };
 
   const prepare = async () => {
@@ -485,11 +674,16 @@ function ReadyReview({
               <View style={styles.bulkActions}>
                 <Pressable
                   accessibilityRole="button"
-                  disabled={isSaving}
+                  disabled={isSaving || unresolvedMergeCount > 0}
                   onPress={() => void decideAllMerges('accepted')}
-                  style={[styles.mergePrimaryButton, { backgroundColor: theme.primary }, isSaving && styles.disabled]}>
+                  style={[styles.mergePrimaryButton, { backgroundColor: theme.primary }, (isSaving || unresolvedMergeCount > 0) && styles.disabled]}>
                   <ThemedText style={styles.selectedDecisionText}>Merge All</ThemedText>
                 </Pressable>
+                {unresolvedMergeCount > 0 && (
+                  <ThemedText type="small" themeColor="danger" style={styles.footerNote}>
+                    Resolve conflicts in {unresolvedMergeCount} merge{unresolvedMergeCount === 1 ? '' : 's'} before using Merge All.
+                  </ThemedText>
+                )}
                 <Pressable
                   accessibilityRole="button"
                   disabled={isSaving}
@@ -513,6 +707,10 @@ function ReadyReview({
       renderItem={({ item }) => (
         <ChangeCard
           change={item}
+          onResolveConflict={(field, sourceContactId) => {
+            if (!isSaving) void resolveConflict(item.id, field, sourceContactId);
+          }}
+          onDecorate={(decoration) => decorate(item.id, decoration)}
           onDecision={(decision) => {
             if (!isSaving) {
               void decide(item.id, decision);
@@ -610,7 +808,10 @@ function ReadyReview({
               <Pressable
                 accessibilityRole="button"
                 disabled={isExecuting}
-                onPress={() => setIsConfirmingExecution(true)}
+                onPress={() => {
+                  if (needsExecutionConfirmation) setIsConfirmingExecution(true);
+                  else void execute();
+                }}
                 style={[styles.simulatorExecuteButton, isExecuting && styles.disabled]}>
                 {isExecuting ? (
                   <ActivityIndicator color="#B42318" />
@@ -626,6 +827,7 @@ function ReadyReview({
                 isExecuting={isExecuting}
                 onCancel={() => setIsConfirmingExecution(false)}
                 onConfirm={() => {
+                  setSessionConfirmedTypes(new Set([...sessionConfirmedTypes, ...confirmationTypes]));
                   void execute().finally(() => setIsConfirmingExecution(false));
                 }}
               />
@@ -978,16 +1180,34 @@ const styles = StyleSheet.create({
   avatarText: { fontSize: 42, lineHeight: 50, fontWeight: '500' },
   mergeName: { textAlign: 'center', fontSize: 28, lineHeight: 34 },
   nativeSection: { gap: Spacing.two },
+  previewModes: {
+    flexDirection: 'row',
+    padding: 3,
+    borderRadius: 12,
+    backgroundColor: '#E9E9EB',
+  },
+  previewMode: { flex: 1, minHeight: 36, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   sectionHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   nativeGroup: { borderRadius: Spacing.three, paddingHorizontal: Spacing.three, overflow: 'hidden' },
   duplicateGroup: { borderRadius: Spacing.three, paddingHorizontal: Spacing.three, overflow: 'hidden' },
   duplicateRow: { minHeight: 76, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
   bulkActions: { gap: Spacing.one, paddingTop: Spacing.two },
   sourceRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
+  sourceDetail: { minHeight: 68, paddingVertical: Spacing.three },
+  sourceValue: { gap: Spacing.half, paddingTop: Spacing.two },
   sourceCopy: { flex: 1, gap: Spacing.half },
   chevron: { color: '#AEAEB2', fontSize: 32, lineHeight: 34, fontWeight: '300' },
   nativeDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#C7C7CC' },
   mergedValueRow: { minHeight: 66, justifyContent: 'center', gap: Spacing.half, paddingVertical: Spacing.two },
+  changeValueRow: { minHeight: 72, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
+  conflictSection: { gap: Spacing.two, paddingTop: Spacing.two },
+  conflictOption: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
+  decorationSection: { gap: Spacing.two, paddingTop: Spacing.two },
+  decorationKinds: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
+  decorationKind: { borderWidth: 1, borderRadius: 16, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },
+  decorationInput: { minHeight: 48, borderWidth: 1, borderRadius: 12, paddingHorizontal: Spacing.three, fontSize: 16 },
+  decorationActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  decorationApply: { minHeight: 44, borderRadius: 12, paddingHorizontal: Spacing.three, alignItems: 'center', justifyContent: 'center' },
   mergeActions: { gap: Spacing.one, paddingTop: Spacing.one },
   mergePrimaryButton: { minHeight: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   mergeTextButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },

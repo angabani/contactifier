@@ -5,12 +5,14 @@ import { getPermissionsAsync } from 'expo-contacts';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
+import type { CleanupWorkflow } from '@/domain';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { listContactBackups } from '@/composition/contact-backup';
 import { iosCertificationFixtures } from '@/composition/ios-certification-fixtures';
+import { manageCleanupWorkflow } from '@/composition/cleanup-workflow';
 import { useTheme } from '@/hooks/use-theme';
 
 import {
@@ -22,6 +24,7 @@ import {
   iosCertificationTarget,
   iosCertificationDenialReasons,
 } from './ios-certification-policy';
+import { createIosCertificationReport, type IosCertificationReport } from './ios-certification-report';
 
 export function IosCertificationHarnessScreen() {
   const { seed } = useLocalSearchParams<{ seed?: string }>();
@@ -33,6 +36,7 @@ export function IosCertificationHarnessScreen() {
   const [verifiedBackupIds, setVerifiedBackupIds] = useState<readonly string[]>([]);
   const [fixtureMessage, setFixtureMessage] = useState('No fixture status loaded.');
   const [fixtureBusy, setFixtureBusy] = useState(false);
+  const [report, setReport] = useState<IosCertificationReport | null>(null);
 
   useEffect(() => {
     if (
@@ -107,6 +111,26 @@ export function IosCertificationHarnessScreen() {
       setFixtureMessage(`Cleanup deleted ${result.deleted}; retained ${result.retained} because ownership was not provable.`);
     } catch (error) {
       setFixtureMessage(error instanceof Error ? error.message : 'Fixture cleanup failed.');
+    } finally {
+      setFixtureBusy(false);
+    }
+  };
+
+  const generateReport = async () => {
+    setFixtureBusy(true);
+    try {
+      const fixtureSet = await iosCertificationFixtures.load();
+      const workflows: CleanupWorkflow[] = [];
+      for (const summary of await manageCleanupWorkflow.listHistory()) {
+        const workflow = await manageCleanupWorkflow.load(summary.id);
+        if (workflow) workflows.push(workflow);
+      }
+      setReport(createIosCertificationReport({
+        generatedAt: new Date().toISOString(),
+        verifiedBackupSelected: verifiedBackupIds.includes(backupId),
+        fixtureSetReady: Boolean(fixtureSet?.fixtures.every(({ status }) => status === 'created')),
+        workflows,
+      }));
     } finally {
       setFixtureBusy(false);
     }
@@ -205,6 +229,21 @@ export function IosCertificationHarnessScreen() {
               </ThemedView>
             ))}
           </View>
+          <ThemedView type="backgroundElement" style={styles.card}>
+            <ThemedText type="smallBold">Evidence report</ThemedText>
+            <Pressable accessibilityRole="button" disabled={!armed || fixtureBusy} onPress={() => void generateReport()}
+              style={[styles.actionButton, { backgroundColor: theme.primary }, (!armed || fixtureBusy) && styles.disabled]}>
+              <ThemedText type="smallBold" style={styles.actionButtonText}>Generate from durable evidence</ThemedText>
+            </Pressable>
+            {report && <>
+              <ThemedText type="smallBold" themeColor={report.certified ? 'success' : 'danger'}>
+                {report.certified ? 'CERTIFIED' : 'NOT CERTIFIED — evidence incomplete'}
+              </ThemedText>
+              {report.items.map((item) => <ThemedText key={item.id} type="small" themeColor={item.status === 'passed' ? 'success' : 'textSecondary'}>
+                {item.status === 'passed' ? '✓' : '○'} {item.id}: {item.evidence}
+              </ThemedText>)}
+            </>}
+          </ThemedView>
         </ScrollView>
       </SafeAreaView>
     </ThemedView>

@@ -123,8 +123,25 @@ describe('dry-run contact write plan', () => {
     kind: 'merge',
     contactIds: ['c', 'd'],
     before: [c, d],
-    after: { ...c, displayName: 'C and D', name: { givenName: 'C and D' } },
+    after: c,
+    resolvedConflictFields: ['name'],
   };
+
+  it('rejects an accepted merge whose structured conflict is unresolved', () => {
+    const unresolved: ProposedChange = { ...merge, resolvedConflictFields: undefined };
+    try {
+      createDryRunContactWritePlan({
+        analyzedSnapshot: analyzed,
+        freshSnapshot: snapshot('fresh', [a, b, c, d]),
+        backup: backup(analyzed),
+        changeSet: changes([unresolved]),
+        plannedAt: at,
+      });
+      throw new Error('Expected unresolved conflict rejection.');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'conflict-unresolved' });
+    }
+  });
 
   it('orders creates and updates before destructive deletes', () => {
     const plan = createDryRunContactWritePlan({
@@ -151,7 +168,7 @@ describe('dry-run contact write plan', () => {
   });
 
   it('creates a new merge target before deleting its source contacts', () => {
-    const newTarget = contact('new-target', 'Merged');
+    const newTarget = { ...contact('new-target', c.displayName), name: c.name };
     const newMerge: ProposedChange = { ...merge, after: newTarget };
     const plan = createDryRunContactWritePlan({
       analyzedSnapshot: analyzed,

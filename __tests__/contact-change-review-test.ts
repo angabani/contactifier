@@ -2,6 +2,7 @@ import {
   createBeautificationChangeSet,
   carryForwardChangeDecisions,
   createExactDuplicateChangeSet,
+  resolveMergeConflict,
   setChangeDecision,
   summarizeChangeDecisions,
 } from '@/application';
@@ -18,7 +19,10 @@ import {
   createDemoContactSnapshot,
   createDemoPreviousContactSnapshot,
 } from '@/features/contact-import/demo-contact-data';
-import { contactReviewValues } from '@/features/contact-review/contact-change-presentation';
+import {
+  contactReviewValues,
+  createMergePreviewPresentation,
+} from '@/features/contact-review/contact-change-presentation';
 
 function contact(
   id: string,
@@ -179,6 +183,43 @@ describe('contact change review', () => {
       { id: 'phone:a:phone', kind: 'phone', label: 'Phone', value: '+1 (212) 555-0100' },
       { id: 'email:a:email', kind: 'email', label: 'Email', value: 'ada@example.com' },
     ]);
+  });
+
+  it('derives merge provenance from the same source and result contacts', () => {
+    const primary = contact('a', 'Ada Personal', '+1 (212) 555-0100', 'ada@example.com');
+    const secondary = contact('b', 'Ada Work', '+1 212 555 0100', 'work@example.com');
+    const result = proposed([primary, secondary]).changes[0];
+    if (result.kind !== 'merge') throw new Error('Expected merge fixture.');
+
+    expect(createMergePreviewPresentation({ sources: result.before, result: result.after }).values)
+      .toMatchObject([
+        { kind: 'phone', status: 'duplicate-collapsed', sourceContactIds: ['a', 'b'] },
+        { kind: 'email', value: 'ada@example.com', status: 'kept', sourceContactIds: ['a'] },
+        { kind: 'email', value: 'work@example.com', status: 'added', sourceContactIds: ['b'] },
+      ]);
+  });
+
+  it('persists an explicit source-name conflict choice in the proposed result', () => {
+    const original = proposed([
+      contact('a', 'Jordan Conflict', '646-555-0300'),
+      contact('b', 'Taylor Conflict', '(646) 555-0300'),
+    ]);
+    const change = original.changes[0];
+    if (change.kind !== 'merge') throw new Error('Expected merge fixture.');
+
+    const resolved = resolveMergeConflict({
+      changeSet: original,
+      changeId: change.id,
+      field: 'name',
+      sourceContactId: 'b',
+    });
+    const resolvedChange = resolved.changes[0];
+    expect(resolvedChange).toMatchObject({
+      kind: 'merge',
+      after: { displayName: 'Taylor Conflict', name: { givenName: 'Taylor Conflict' } },
+      resolvedConflictFields: ['name'],
+    });
+    expect(original.changes[0]).not.toHaveProperty('resolvedConflictFields');
   });
 
   it('creates separate proposals for disconnected duplicate groups', () => {

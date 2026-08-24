@@ -22,6 +22,7 @@ export type {
 export type {
   ChangeDecision,
   ChangeOrigin,
+  ContactDecoration,
   ChangeSet,
   ContactDeleteChange,
   ContactMergeChange,
@@ -86,6 +87,12 @@ export type {
   MergeSignal,
   MergeSignalKind,
 } from './merging/merge-candidate';
+export { findMergeConflicts, mergeConflictResultMatchesSource } from './merging/merge-conflicts';
+export type {
+  MergeConflict,
+  MergeConflictField,
+  MergeConflictOption,
+} from './merging/merge-conflicts';
 export {
   analyzeExactDuplicates,
   DEFAULT_EXACT_DUPLICATE_MATCH_LIMIT,

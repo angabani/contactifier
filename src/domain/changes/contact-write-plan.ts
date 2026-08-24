@@ -4,6 +4,7 @@ import { validateBackupManifest } from '../backups/validate-backup-manifest';
 import type { CanonicalContact } from '../contacts/contact';
 import type { ContactSnapshot } from '../contacts/contact-snapshot';
 import { isSameContactSource } from '../contacts/contact-source';
+import { findMergeConflicts, mergeConflictResultMatchesSource } from '../merging/merge-conflicts';
 import { createChangeSet } from './create-change-set';
 import type { ChangeSet, ProposedChange } from './proposed-change';
 import { assertDomain } from '../shared/invariant';
@@ -58,6 +59,7 @@ export interface PerChangeContactWritePlan extends ContactWritePlan {
 
 export type ContactWritePlanErrorCode =
   | 'backup-mismatch'
+  | 'conflict-unresolved'
   | 'contact-missing'
   | 'contact-overlap'
   | 'invalid-decision'
@@ -222,6 +224,21 @@ export function createDryRunContactWritePlan(input: {
   );
   const touchedSourceIds = new Set<string>();
   for (const change of accepted) {
+    if (change.kind === 'merge') {
+      const resolved = new Set(change.resolvedConflictFields ?? []);
+      const unresolved = findMergeConflicts(change.before).filter(({ field }) =>
+        !resolved.has(field) || !mergeConflictResultMatchesSource({
+          field,
+          result: change.after,
+          sources: change.before,
+        }));
+      if (unresolved.length > 0) {
+        throw new ContactWritePlanError(
+          'conflict-unresolved',
+          `Merge ${change.id} has unresolved fields: ${unresolved.map(({ field }) => field).join(', ')}.`,
+        );
+      }
+    }
     if (
       change.kind !== 'delete' &&
       !isSameContactSource(change.after.recordRef.source, analyzedSnapshot.source)
