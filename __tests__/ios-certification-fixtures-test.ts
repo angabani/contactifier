@@ -20,12 +20,12 @@ class MemoryRepository implements IosFixtureRepository {
 function gateway(): IosFixtureGateway & {
   create: jest.Mock<Promise<string>, [IosFixtureSpec]>;
   findByMarker: jest.Mock<Promise<readonly IosFixtureCandidate[]>, [string]>;
-  deleteIfOwned: jest.Mock<Promise<boolean>, [{ id: string; marker: string; expectedGivenName: string }]>;
+  deleteIfOwned: jest.Mock<Promise<boolean>, [{ id: string; marker: string; expectedGivenName: string; groups: readonly string[] }]>;
 } {
   return {
     create: jest.fn(async (spec) => `native-${spec.key}`),
     findByMarker: jest.fn(async (_marker: string) => [] as readonly IosFixtureCandidate[]),
-    deleteIfOwned: jest.fn(async (_input: { id: string; marker: string; expectedGivenName: string }) => true),
+    deleteIfOwned: jest.fn(async (_input: { id: string; marker: string; expectedGivenName: string; groups: readonly string[] }) => true),
   };
 }
 
@@ -105,7 +105,7 @@ describe('IosCertificationFixtureManager', () => {
     const result = await manager(repository, native).cleanup();
 
     expect(result).toEqual({ deleted: 1, retained: 1 });
-    expect(native.deleteIfOwned).toHaveBeenCalledWith({ id: 'a', marker: fixtures[0].marker, expectedGivenName: fixtures[0].givenName });
+    expect(native.deleteIfOwned).toHaveBeenCalledWith({ id: 'a', marker: fixtures[0].marker, expectedGivenName: fixtures[0].givenName, groups: [] });
     expect(native.deleteIfOwned).toHaveBeenCalledTimes(1);
     expect(repository.value?.fixtures[0].status).toBe('ambiguous');
   });
@@ -120,8 +120,8 @@ describe('IosCertificationFixtureManager', () => {
   it('defines a versioned dataset covering positive, negative, conflict, and rich cases', () => {
     const fixtures = iosFixtureSpecs('matrix');
 
-    expect(IOS_FIXTURE_DATASET_VERSION).toBe(2);
-    expect(fixtures).toHaveLength(15);
+    expect(IOS_FIXTURE_DATASET_VERSION).toBe(5);
+    expect(fixtures).toHaveLength(17);
     expect(new Set(fixtures.map(({ key }) => key)).size).toBe(fixtures.length);
     expect(new Set(fixtures.map(({ scenario }) => scenario))).toEqual(new Set([
       'Exact normalized phone',
@@ -132,10 +132,18 @@ describe('IosCertificationFixtureManager', () => {
       'Incomplete contact',
       'Unique negative control',
       'Rich multi-value merge',
+      'Photo merge and restore',
     ]));
     expect(fixtures.find(({ key }) => key === 'rich-a')).toMatchObject({
       company: 'Contactifier Labs',
+      prefix: 'Dr.',
+      phoneticGivenName: 'Rye-lee',
+      website: { value: 'https://contactifier.example.test/riley' },
+      birthday: { year: 1988, month: 4, day: 12 },
+      event: { label: 'anniversary' },
+      groups: ['[Contactifier Test] matrix Rich Contacts'],
       phones: expect.arrayContaining([{ label: 'work', value: '+1 303 555 0501' }]),
     });
+    expect(fixtures.filter(({ photoKey }) => photoKey === 'contactifier-avatar')).toHaveLength(2);
   });
 });

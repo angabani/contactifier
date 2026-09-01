@@ -80,6 +80,7 @@ export class ResumeContactWriteFinalization {
       outcome,
       this.clock.now().toISOString(),
       receipt,
+      'recovery',
     );
     await this.repository.save(next, workflow.revision);
     return next;

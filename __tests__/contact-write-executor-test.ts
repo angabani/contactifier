@@ -385,6 +385,7 @@ describe('simulated contact write executor', () => {
     expect(completed.journal.at(-1)?.finalizationReceipt).toMatchObject({
       operationId: 'create-change:create:0',
     });
+    expect(completed.journal.at(-1)?.origin).toBe('recovery');
   });
 
   it('rolls back prior writes after an injected definitely-not-applied failure', async () => {
@@ -395,6 +396,7 @@ describe('simulated contact write executor', () => {
     const result = await executeWith(simulator, prepared.workflow);
 
     expect(result.phase).toBe('rolled-back');
+    expect(result.rollbackCause).toBe('write-rejected');
     expect(result.journal.map(({ outcome }) => outcome)).toEqual([
       'started',
       'applied',
@@ -419,6 +421,7 @@ describe('simulated contact write executor', () => {
     const result = await executeWith(simulator, prepared.workflow);
 
     expect(result.phase).toBe('rolled-back');
+    expect(result.rollbackCause).toBe('verification-failed');
     expect(simulator.contacts().find(({ id }) => id === 'a')?.displayName).toBe('Before');
   });
 
@@ -479,11 +482,13 @@ describe('simulated contact write executor', () => {
     ).execute(failed);
 
     expect(reconciled.phase).toBe('rolled-back');
+    expect(reconciled.rollbackCause).toBe('reconciled-write');
     expect(reconciled.journal.map(({ outcome }) => outcome)).toEqual([
       'started',
       'applied',
       'compensated',
     ]);
+    expect(reconciled.journal.find(({ outcome }) => outcome === 'applied')?.origin).toBe('reconciliation');
     expect(reconciled.journal.at(-1)?.compensationReceipt).toMatchObject({
       operationId: 'change-a:update:0',
       kind: 'restore-update',
@@ -516,7 +521,9 @@ describe('simulated contact write executor', () => {
     ).execute(failed);
 
     expect(reconciled.phase).toBe('rolled-back');
+    expect(reconciled.rollbackCause).toBe('reconciled-write');
     expect(reconciled.journal.map(({ outcome }) => outcome)).toEqual(['started', 'not-applied']);
+    expect(reconciled.journal.at(-1)?.origin).toBe('reconciliation');
   });
 
   it('requires manual review when live state matches neither before nor after', async () => {
@@ -553,5 +560,6 @@ describe('simulated contact write executor', () => {
       failure: { code: 'manual-review-required', recoverable: false },
     });
     expect(reconciled.journal.at(-1)?.outcome).toBe('ambiguous');
+    expect(reconciled.journal.at(-1)?.origin).toBe('reconciliation');
   });
 });

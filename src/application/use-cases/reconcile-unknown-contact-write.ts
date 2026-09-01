@@ -1,6 +1,7 @@
 import {
   recordWorkflowCompensation,
   recordWorkflowReconciliation,
+  recordWorkflowRollbackCause,
   transitionCleanupWorkflow,
   type CleanupWorkflow,
   type ContactWriteReceipt,
@@ -49,7 +50,9 @@ export class ReconcileUnknownContactWrite {
     await this.repository.save(current, workflow.revision);
     if (reconciliation.outcome === 'ambiguous') return current;
 
-    current = await this.transition(current, 'rolling-back');
+    const withCause = recordWorkflowRollbackCause(current, 'reconciled-write', this.clock.now().toISOString());
+    await this.repository.save(withCause, current.revision);
+    current = await this.transition(withCause, 'rolling-back');
     const receipts = new Map(
       current.journal
         .filter((entry) => entry.outcome === 'applied' && entry.receipt)

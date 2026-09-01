@@ -3,6 +3,17 @@ export {
   ExpoDeviceContactReader,
   type DeviceContactsApi,
 } from './expo-device-contact-reader';
+export {
+  ExpoIosContactGroupMembershipReader,
+  type DeviceContactGroupMembershipReader,
+  type ExpoContactGroup,
+  type ExpoContactGroupApi,
+} from './expo-ios-contact-group-membership-reader';
+export {
+  ExpoIosContactGroupMembershipWriter,
+  type ExpoContactGroupMutationApi,
+  type ExpoMutableContactGroup,
+} from './expo-ios-contact-group-membership-writer';
 export { mapExpoContact, type ExpoContactDetails } from './map-expo-contact';
 export {
   ExpoIosContactWriter,

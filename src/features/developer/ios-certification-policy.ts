@@ -35,8 +35,10 @@ export const IOS_CERTIFICATION_SCENARIOS: readonly IosCertificationScenario[] = 
   { id: 'write-interruption', title: 'Interrupt each native write', expectedEvidence: 'Restart reconciles without retrying an ambiguous mutation.' },
   { id: 'finalization-interruption', title: 'Interrupt marker finalization', expectedEvidence: 'A fresh authorization resumes idempotent marker removal.' },
   { id: 'rollback', title: 'Force verification failure', expectedEvidence: 'Reverse-order compensation restores the exact before-state.' },
+  { id: 'user-undo', title: 'Undo a completed transaction', expectedEvidence: 'A separate inverse transaction restores and verifies the original native records.' },
   { id: 'permission-change', title: 'Revoke or limit contact access', expectedEvidence: 'Execution stops before mutation and reports the prerequisite.' },
-  { id: 'photo-round-trip', title: 'Create and recreate with a photo', expectedEvidence: 'Authenticated bytes produce the same visible contact photo.' },
+  { id: 'rich-field-round-trip', title: 'Preserve rich contact fields', expectedEvidence: 'Addresses, organizations, URLs, dates, groups, and structured names survive verified mutation and restoration.' },
+  { id: 'photo-round-trip', title: 'Create and recreate with a photo', expectedEvidence: 'Pending explicit SHA-256 comparison between authenticated backup bytes and the native iOS photo after verified restoration.' },
 ]);
 
 export function iosCertificationDenialReasons(

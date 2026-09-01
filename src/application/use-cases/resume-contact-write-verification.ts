@@ -1,9 +1,11 @@
 import {
   recordWorkflowCompensation,
   recordWorkflowFinalization,
+  recordWorkflowRollbackCause,
   transitionCleanupWorkflow,
   type CleanupWorkflow,
   type ContactWriteReceipt,
+  type CleanupWorkflowRollbackCause,
 } from '@/domain';
 
 import type { CleanupWorkflowRepository } from '../ports/cleanup-workflow-repository';
@@ -58,8 +60,10 @@ export class ResumeContactWriteVerification {
     }
   }
 
-  private async rollback(workflow: CleanupWorkflow, code: string): Promise<CleanupWorkflow> {
-    let current = await this.transition(workflow, 'rolling-back');
+  private async rollback(workflow: CleanupWorkflow, code: CleanupWorkflowRollbackCause): Promise<CleanupWorkflow> {
+    let current = recordWorkflowRollbackCause(workflow, code, this.clock.now().toISOString());
+    await this.repository.save(current, workflow.revision);
+    current = await this.transition(current, 'rolling-back');
     const receipts = new Map(
       current.journal
         .filter(({ outcome, receipt }) => outcome === 'applied' && receipt)

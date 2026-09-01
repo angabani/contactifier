@@ -22,10 +22,16 @@ export interface CleanupWorkflowFailure {
   readonly failedFrom: Exclude<CleanupWorkflowPhase, 'failed'>;
 }
 
+export type CleanupWorkflowRollbackCause =
+  | 'reconciled-write'
+  | 'verification-failed'
+  | 'write-rejected';
+
 export interface CleanupWorkflowJournalEntry {
   readonly operationId: string;
   readonly outcome: 'ambiguous' | 'applied' | 'compensated' | 'finalization-started' | 'finalized' | 'not-applied' | 'started';
   readonly recordedAt: string;
+  readonly origin?: 'reconciliation' | 'recovery';
   readonly receipt?: ContactWriteReceipt;
   readonly compensationReceipt?: ContactWriteCompensationReceipt;
   readonly finalizationReceipt?: ContactWriteFinalizationReceipt;
@@ -67,6 +73,7 @@ export interface CleanupWorkflow {
   readonly writePlan?: ContactWritePlan;
   readonly journal: readonly CleanupWorkflowJournalEntry[];
   readonly failure?: CleanupWorkflowFailure;
+  readonly rollbackCause?: CleanupWorkflowRollbackCause;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -135,6 +142,16 @@ export function validateCleanupWorkflow(workflow: CleanupWorkflow): CleanupWorkf
   } else {
     assertDomain(!workflow.failure, 'Only failed cleanup workflows may contain failure metadata.');
   }
+  if (workflow.rollbackCause) {
+    assertDomain(
+      workflow.phase === 'rolling-back' ||
+        workflow.phase === 'rolled-back' ||
+        workflow.phase === 'failed' ||
+        workflow.phase === 'applying' ||
+        workflow.phase === 'verifying',
+      'Rollback cause is valid only while rolling back or after rollback.',
+    );
+  }
   if (workflow.writePlan) {
     validateContactWritePlan(workflow.writePlan);
     assertDomain(
@@ -163,6 +180,12 @@ export function validateCleanupWorkflow(workflow: CleanupWorkflow): CleanupWorkf
     assertDomain(
       ['ambiguous', 'applied', 'compensated', 'finalization-started', 'finalized', 'not-applied', 'started'].includes(entry.outcome),
       `Journal entry for ${entry.operationId} has an invalid outcome.`,
+    );
+    assertDomain(
+      !entry.origin ||
+        (entry.origin === 'reconciliation' && ['ambiguous', 'applied', 'not-applied'].includes(entry.outcome)) ||
+        (entry.origin === 'recovery' && ['finalization-started', 'finalized'].includes(entry.outcome)),
+      `Journal entry for ${entry.operationId} has an invalid origin.`,
     );
     if (entry.outcome === 'started') {
       assertDomain(!started.has(entry.operationId), `Operation ${entry.operationId} was started twice.`);
@@ -419,13 +442,14 @@ export function recordWorkflowFinalization(
   outcome: 'finalization-started' | 'finalized',
   recordedAt: string,
   finalizationReceipt?: ContactWriteFinalizationReceipt,
+  origin?: Extract<CleanupWorkflowJournalEntry['origin'], 'recovery'>,
 ): CleanupWorkflow {
   if (workflow.phase !== 'finalizing') {
     throw new CleanupWorkflowTransitionError(`Cannot record ${outcome} while workflow is ${workflow.phase}.`);
   }
   return revised(
     workflow,
-    { journal: Object.freeze([...workflow.journal, { operationId, outcome, recordedAt, finalizationReceipt }]) },
+    { journal: Object.freeze([...workflow.journal, { operationId, outcome, recordedAt, finalizationReceipt, origin }]) },
     recordedAt,
   );
 }
@@ -445,7 +469,7 @@ export function recordWorkflowReconciliation(
     {
       journal: Object.freeze([
         ...workflow.journal,
-        { operationId, outcome, recordedAt, receipt },
+        { operationId, outcome, recordedAt, receipt, origin: 'reconciliation' },
       ]),
       failure:
         outcome === 'ambiguous'
@@ -455,6 +479,17 @@ export function recordWorkflowReconciliation(
     recordedAt,
   );
   return next;
+}
+
+export function recordWorkflowRollbackCause(
+  workflow: CleanupWorkflow,
+  rollbackCause: CleanupWorkflowRollbackCause,
+  recordedAt: string,
+): CleanupWorkflow {
+  if (!['applying', 'failed', 'verifying'].includes(workflow.phase) || workflow.rollbackCause) {
+    throw new CleanupWorkflowTransitionError('Rollback cause cannot be recorded in the current workflow state.');
+  }
+  return revised(workflow, { rollbackCause }, recordedAt);
 }
 
 const allowedTransitions: Readonly<Record<CleanupWorkflowPhase, readonly CleanupWorkflowPhase[]>> = {

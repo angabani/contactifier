@@ -84,6 +84,6 @@ describe('iOS certification harness policy', () => {
     expect(new Set(IOS_CERTIFICATION_SCENARIOS.map(({ id }) => id)).size).toBe(
       IOS_CERTIFICATION_SCENARIOS.length,
     );
-    expect(IOS_CERTIFICATION_SCENARIOS).toHaveLength(7);
+    expect(IOS_CERTIFICATION_SCENARIOS).toHaveLength(9);
   });
 });

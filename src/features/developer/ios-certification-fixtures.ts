@@ -1,6 +1,6 @@
 export const IOS_FIXTURE_NAME_PREFIX = '[Contactifier Test]';
 export const IOS_FIXTURE_MARKER_PREFIX = 'contactifier://certification-fixture/';
-export const IOS_FIXTURE_DATASET_VERSION = 2;
+export const IOS_FIXTURE_DATASET_VERSION = 5;
 
 export type IosFixtureStatus = 'pending-create' | 'create-unknown' | 'created' | 'absent' | 'ambiguous';
 
@@ -14,6 +14,18 @@ export interface IosFixtureSpec {
   readonly company?: string;
   readonly department?: string;
   readonly jobTitle?: string;
+  readonly photoKey?: 'contactifier-avatar';
+  readonly groups?: readonly string[];
+  readonly prefix?: string;
+  readonly middleName?: string;
+  readonly suffix?: string;
+  readonly phoneticGivenName?: string;
+  readonly website?: { readonly label: string; readonly value: string };
+  readonly birthday?: { readonly year?: number; readonly month: number; readonly day: number };
+  readonly event?: {
+    readonly label: string;
+    readonly date: { readonly year?: number; readonly month: number; readonly day: number };
+  };
   readonly address?: {
     readonly label: string;
     readonly street: string;
@@ -53,7 +65,12 @@ export interface IosFixtureCandidate {
 export interface IosFixtureGateway {
   create(spec: IosFixtureSpec): Promise<string>;
   findByMarker(marker: string): Promise<readonly IosFixtureCandidate[]>;
-  deleteIfOwned(input: { readonly id: string; readonly marker: string; readonly expectedGivenName: string }): Promise<boolean>;
+  deleteIfOwned(input: {
+    readonly id: string;
+    readonly marker: string;
+    readonly expectedGivenName: string;
+    readonly groups: readonly string[];
+  }): Promise<boolean>;
 }
 
 export type IosFixtureSetupOutcome = 'ready' | 'retry-required' | 'ambiguous' | 'create-unknown' | 'dataset-update-required';
@@ -67,6 +84,7 @@ export function iosFixtureSpecs(id: string): readonly IosFixtureSpec[] {
   const marker = (key: string) => `${IOS_FIXTURE_MARKER_PREFIX}${id}/${key}`;
   const spec = (value: Omit<IosFixtureSpec, 'marker'>): IosFixtureSpec => ({ ...value, marker: marker(value.key) });
   const name = (value: string) => `${IOS_FIXTURE_NAME_PREFIX} ${value}`;
+  const richGroup = `${IOS_FIXTURE_NAME_PREFIX} ${id} Rich Contacts`;
   return Object.freeze([
     spec({ key: 'phone-a', scenario: 'Exact normalized phone', givenName: name('Avery'), familyName: 'Phone A', phones: [{ label: 'mobile', value: '+1 415 555 0101' }], emails: [] }),
     spec({ key: 'phone-b', scenario: 'Exact normalized phone', givenName: name('Avery'), familyName: 'Phone B', phones: [{ label: 'work', value: '+1 (415) 555-0101' }], emails: [] }),
@@ -81,8 +99,10 @@ export function iosFixtureSpecs(id: string): readonly IosFixtureSpec[] {
     spec({ key: 'conflict-b', scenario: 'Conflicting identity', givenName: name('Taylor'), familyName: 'Conflict B', phones: [{ label: 'mobile', value: '(646) 555-0300' }], emails: [] }),
     spec({ key: 'incomplete', scenario: 'Incomplete contact', givenName: name('Incomplete'), familyName: '', phones: [], emails: [] }),
     spec({ key: 'unique', scenario: 'Unique negative control', givenName: name('Unique'), familyName: 'Control', phones: [{ label: 'mobile', value: '+1 202 555 0400' }], emails: [{ label: 'home', value: 'unique.fixture@example.test' }] }),
-    spec({ key: 'rich-a', scenario: 'Rich multi-value merge', givenName: name('Riley'), familyName: 'Rich A', phones: [{ label: 'mobile', value: '+1 303 555 0500' }, { label: 'work', value: '+1 303 555 0501' }], emails: [{ label: 'home', value: 'riley.fixture@example.test' }], company: 'Contactifier Labs', department: 'Certification', jobTitle: 'Test Contact', address: { label: 'work', street: '100 Test Lane', city: 'Denver', region: 'CO', postalCode: '80202', country: 'US' } }),
+    spec({ key: 'rich-a', scenario: 'Rich multi-value merge', givenName: name('Riley'), middleName: 'Certification', familyName: 'Rich A', prefix: 'Dr.', suffix: 'III', phoneticGivenName: 'Rye-lee', phones: [{ label: 'mobile', value: '+1 303 555 0500' }, { label: 'work', value: '+1 303 555 0501' }], emails: [{ label: 'home', value: 'riley.fixture@example.test' }], company: 'Contactifier Labs', department: 'Certification', jobTitle: 'Test Contact', groups: [richGroup], address: { label: 'work', street: '100 Test Lane', city: 'Denver', region: 'CO', postalCode: '80202', country: 'US' }, website: { label: 'homepage', value: 'https://contactifier.example.test/riley' }, birthday: { year: 1988, month: 4, day: 12 }, event: { label: 'anniversary', date: { year: 2020, month: 9, day: 21 } } }),
     spec({ key: 'rich-b', scenario: 'Rich multi-value merge', givenName: name('Riley'), familyName: 'Rich B', phones: [{ label: 'mobile', value: '+1 (303) 555-0500' }], emails: [{ label: 'work', value: 'riley.work@example.test' }], company: 'Contactifier Labs' }),
+    spec({ key: 'photo-a', scenario: 'Photo merge and restore', givenName: name('Casey'), familyName: 'Photo A', phones: [{ label: 'mobile', value: '+1 720 555 0600' }], emails: [], photoKey: 'contactifier-avatar' }),
+    spec({ key: 'photo-b', scenario: 'Photo merge and restore', givenName: name('Casey'), familyName: 'Photo B', phones: [{ label: 'work', value: '+1 (720) 555-0600' }], emails: [], photoKey: 'contactifier-avatar' }),
   ]);
 }
 
@@ -160,7 +180,12 @@ export class IosCertificationFixtureManager {
         if (matches.length > 0) retained.push({ ...fixture, status: 'ambiguous' });
         continue;
       }
-      if (await this.gateway.deleteIfOwned({ id: matches[0].id, marker: fixture.marker, expectedGivenName: fixture.givenName })) deleted += 1;
+      if (await this.gateway.deleteIfOwned({
+        id: matches[0].id,
+        marker: fixture.marker,
+        expectedGivenName: fixture.givenName,
+        groups: fixture.groups ?? [],
+      })) deleted += 1;
       else retained.push({ ...fixture, status: 'ambiguous' });
     }
     if (retained.length === 0) await this.repository.clear();

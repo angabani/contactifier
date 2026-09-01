@@ -15,6 +15,7 @@ import { readDeviceContacts } from '@/composition/device-contact-scan';
 import { prepareAndExecuteSimulatorFixtureUndo } from '@/composition/simulator-contact-write';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import type { CanonicalContact, CleanupWorkflow } from '@/domain';
+import { useDeviceContactScanSession } from '@/features/contact-import/use-device-contact-scan';
 import { useTheme } from '@/hooks/use-theme';
 
 const reasonCopy: Record<ContactTransactionUndoBlockReason, string> = {
@@ -43,6 +44,7 @@ export function ContactTransactionUndoScreen() {
   const { workflowId } = useLocalSearchParams<{ workflowId?: string }>();
   const router = useRouter();
   const theme = useTheme();
+  const { invalidateScan } = useDeviceContactScanSession();
   const [preview, setPreview] = useState<ContactTransactionUndoPreview | null>(null);
   const [workflow, setWorkflow] = useState<CleanupWorkflow | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -108,7 +110,10 @@ export function ContactTransactionUndoScreen() {
         return;
       }
       const result = await prepareAndExecuteSimulatorFixtureUndo(latest, verified.snapshot);
-      if (result.phase === 'completed') setDecisionState('completed');
+      if (result.phase === 'completed') {
+        invalidateScan();
+        setDecisionState('completed');
+      }
       else if (result.phase === 'rolled-back') {
         setDecisionError('Undo verification failed. All inverse writes were rolled back.');
         setDecisionState('failed');
@@ -122,6 +127,44 @@ export function ContactTransactionUndoScreen() {
     }
   };
 
+  if (decisionState === 'completed' || decisionState === 'rejected') {
+    const completed = decisionState === 'completed';
+    return (
+      <ThemedView style={styles.screen}>
+        <SafeAreaView style={styles.resultSafeArea}>
+          <ThemedView style={styles.resultContent}>
+            <ThemedView
+              style={[
+                styles.resultMark,
+                { backgroundColor: completed ? theme.primarySoft : theme.backgroundSelected },
+              ]}>
+              <ThemedText style={[styles.resultMarkText, { color: completed ? theme.success : theme.textSecondary }]}>
+                {completed ? '✓' : '—'}
+              </ThemedText>
+            </ThemedView>
+            <ThemedText type="title" style={styles.resultText}>
+              {completed ? 'Undo completed' : 'Current contacts kept'}
+            </ThemedText>
+            <ThemedText themeColor="textSecondary" style={styles.resultText}>
+              {completed
+                ? 'The original contact information was restored and verified in the native Contacts directory.'
+                : 'Current contacts were verified and left unchanged.'}
+            </ThemedText>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.replace('/')}
+              style={[styles.primaryButton, { backgroundColor: theme.primary }]}>
+              <ThemedText style={styles.primaryButtonText}>Scan contacts</ThemedText>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => router.replace('/activity')} style={styles.textButton}>
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>View activity</ThemedText>
+            </Pressable>
+          </ThemedView>
+        </SafeAreaView>
+      </ThemedView>
+    );
+  }
+
   return (
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.safeArea}>
@@ -131,7 +174,7 @@ export function ContactTransactionUndoScreen() {
           </Pressable>
           <ThemedText type="title">Undo preview</ThemedText>
           <ThemedText themeColor="textSecondary">
-            Contactifier freshly rereads affected contacts before preparing any restore transaction.
+            Review the original contact information that Contactifier will restore.
           </ThemedText>
 
           {isLoading ? <ActivityIndicator color={theme.primary} /> : loadError || !preview ? (
@@ -140,10 +183,10 @@ export function ContactTransactionUndoScreen() {
             <>
               <ThemedView type="backgroundElement" style={styles.summary}>
                 <ThemedText type="subtitle" themeColor={preview.ready ? 'success' : 'danger'}>
-                  {preview.ready ? 'Undo can be prepared' : 'Undo is blocked'}
+                  {preview.ready ? 'Ready to undo' : 'Undo unavailable'}
                 </ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
-                  {preview.compensationCount} guarded restore steps · transaction {workflow?.id}
+                  {preview.contactsToRestore.length} {preview.contactsToRestore.length === 1 ? 'contact' : 'contacts'} will be restored from the verified transaction record.
                 </ThemedText>
                 {preview.blockReasons.map((reason) => (
                   <ThemedText key={reason} type="small" themeColor="danger">{reasonCopy[reason]}</ThemedText>
@@ -166,43 +209,25 @@ export function ContactTransactionUndoScreen() {
                 </ThemedText>
               )}
 
-              {decisionState === 'completed' ? (
-                <ThemedView type="backgroundElement" style={styles.summary}>
-                  <ThemedText type="subtitle" themeColor="success">Undo verified and completed</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Every inverse write was verified against the native Contacts directory.
-                  </ThemedText>
-                </ThemedView>
-              ) : decisionState === 'rejected' ? (
-                <ThemedView type="backgroundElement" style={styles.summary}>
-                  <ThemedText type="subtitle">Undo rejected</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Contact state was freshly verified. No native write or undo workflow was created.
-                  </ThemedText>
-                </ThemedView>
-              ) : (
-                <>
-                  {decisionError && <ThemedText themeColor="danger">{decisionError}</ThemedText>}
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={!preview.ready || decisionState === 'verifying'}
-                    onPress={() => void decide('accept')}
-                    style={[styles.undoButton, (!preview.ready || decisionState === 'verifying') && styles.disabled]}>
-                    <ThemedText style={styles.undoButtonText}>
-                      {decisionState === 'verifying' ? 'Verifying current contacts…' : 'Accept and verify Undo'}
-                    </ThemedText>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={!preview.ready || decisionState === 'verifying'}
-                    onPress={() => void decide('reject')}
-                    style={[styles.rejectButton, { borderColor: theme.textSecondary }, (!preview.ready || decisionState === 'verifying') && styles.disabled]}>
-                    <ThemedText type="smallBold">Reject after verification</ThemedText>
-                  </Pressable>
-                </>
-              )}
+              {decisionError && <ThemedText themeColor="danger">{decisionError}</ThemedText>}
+              <Pressable
+                accessibilityRole="button"
+                disabled={!preview.ready || decisionState === 'verifying'}
+                onPress={() => void decide('accept')}
+                style={[styles.undoButton, (!preview.ready || decisionState === 'verifying') && styles.disabled]}>
+                <ThemedText style={styles.undoButtonText}>
+                  {decisionState === 'verifying' ? 'Checking current contacts…' : 'Undo change'}
+                </ThemedText>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={!preview.ready || decisionState === 'verifying'}
+                onPress={() => void decide('reject')}
+                style={[styles.rejectButton, { borderColor: theme.textSecondary }, (!preview.ready || decisionState === 'verifying') && styles.disabled]}>
+                <ThemedText type="smallBold">Keep current contacts</ThemedText>
+              </Pressable>
               <ThemedText type="small" themeColor="textSecondary" style={styles.note}>
-                Accept rereads contacts, journals each inverse write, verifies the native result, and automatically rolls back on failed verification.
+                Before either choice completes, Contactifier rereads the affected contacts. Undo is journaled, verified, and automatically rolled back if verification fails.
               </ThemedText>
             </>
           )}
@@ -214,6 +239,14 @@ export function ContactTransactionUndoScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 }, safeArea: { flex: 1 },
+  resultSafeArea: { flex: 1 },
+  resultContent: { flex: 1, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center', justifyContent: 'center', padding: Spacing.four, gap: Spacing.three },
+  resultMark: { width: 76, height: 76, borderRadius: 38, alignSelf: 'center', alignItems: 'center', justifyContent: 'center' },
+  resultMarkText: { fontSize: 42, lineHeight: 48, fontWeight: '700' },
+  resultText: { textAlign: 'center' },
+  primaryButton: { minHeight: 54, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  primaryButtonText: { color: '#FFFFFF', fontWeight: '700' },
+  textButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   content: { width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center', padding: Spacing.four, gap: Spacing.three },
   summary: { padding: Spacing.three, borderRadius: Spacing.three, gap: Spacing.two },
   card: { padding: Spacing.three, borderRadius: Spacing.three, gap: Spacing.one },

@@ -108,6 +108,7 @@ export { ReconcileUnknownContactWrite } from './use-cases/reconcile-unknown-cont
 export { WithMaterializedContactPhotos } from './use-cases/with-materialized-contact-photos';
 export { ResumeContactWriteFinalization } from './use-cases/resume-contact-write-finalization';
 export { ResumeContactWriteVerification } from './use-cases/resume-contact-write-verification';
+export { getCompletedTransactionResultContactId } from './use-cases/get-completed-transaction-result-contact-id';
 export {
   ContactWriteAuthorization,
   ContactWriteCapabilityError,

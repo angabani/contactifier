@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import * as Device from 'expo-device';
+import { Contact } from 'expo-contacts';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -14,6 +15,7 @@ import {
   requiresContactConfirmation,
   resolveMergeConflict,
   decorateProposedContact,
+  getCompletedTransactionResultContactId,
   setChangeDecision,
   summarizeChangeDecisions,
   type ReviewDecision,
@@ -70,6 +72,14 @@ function changeTitle(change: ProposedChange): string {
   return `Update ${change.before.displayName}`;
 }
 
+function completedTransactionTitle(workflow: CleanupWorkflow): string {
+  const change = workflow.changeSet.changes.find(({ decision }) => decision === 'accepted');
+  if (!change) return 'Completed contact change';
+  if (change.kind === 'merge') return `Merged ${change.before.length} contacts`;
+  if (change.kind === 'delete') return `Deleted ${change.before.displayName || 'unnamed contact'}`;
+  return `Updated ${change.before.displayName || 'unnamed contact'}`;
+}
+
 function ContactDetails({ contact }: { readonly contact: CanonicalContact }) {
   const values = contactReviewValues(contact);
   return (
@@ -109,6 +119,7 @@ function ChangeCard({
     change.decoration?.kind ?? 'honorific');
   const [decorationValue, setDecorationValue] = useState(change.decoration?.value ?? '');
   const [decorationError, setDecorationError] = useState<string | null>(null);
+  const [showDecorationEditor, setShowDecorationEditor] = useState(Boolean(change.decoration));
   const before = change.kind === 'merge' ? change.before : [change.before];
   const after = change.kind === 'delete' ? undefined : change.after;
 
@@ -245,7 +256,13 @@ function ChangeCard({
         </View>}
 
         <View style={styles.decorationSection}>
-          <ThemedText type="subtitle" themeColor="textSecondary">Optional contact decoration</ThemedText>
+          <Pressable accessibilityRole="button" onPress={() => setShowDecorationEditor((visible) => !visible)}>
+            <ThemedText type="smallBold" style={{ color: theme.primary }}>
+              {showDecorationEditor ? 'Hide optional details' : change.decoration ? 'Edit optional details' : 'Add optional details'}
+            </ThemedText>
+          </Pressable>
+          {showDecorationEditor && <>
+          <ThemedText type="subtitle" themeColor="textSecondary">Contact decoration</ThemedText>
           <View style={styles.decorationKinds}>
             {(['honorific', 'company', 'designation', 'visible-name-tag'] as const).map((kind) => (
               <Pressable key={kind} onPress={() => { setDecorationKind(kind); setDecorationError(null); }}
@@ -280,6 +297,7 @@ function ChangeCard({
               <ThemedText type="smallBold" style={{ color: theme.primary }}>Remove</ThemedText>
             </Pressable>}
           </View>
+          </>}
         </View>
 
         <View style={styles.mergeActions}>
@@ -473,6 +491,7 @@ function ReadyReview({
 }) {
   const router = useRouter();
   const theme = useTheme();
+  const { invalidateScan } = useDeviceContactScanSession();
   const [changeSet, setChangeSet] = useState(initialChangeSet);
   const [plan, setPlan] = useState<ContactWritePlan | null>(initialPlan ?? null);
   const [isPreparing, setIsPreparing] = useState(false);
@@ -483,7 +502,10 @@ function ReadyReview({
   const executionInFlight = useRef(false);
   const [executionResult, setExecutionResult] = useState<SimulatorTransactionBatchResult | null>(null);
   const [executionError, setExecutionError] = useState<string | null>(null);
+  const [isViewingContact, setIsViewingContact] = useState(false);
+  const [viewContactError, setViewContactError] = useState(false);
   const [isConfirmingExecution, setIsConfirmingExecution] = useState(false);
+  const [showSafetyDetails, setShowSafetyDetails] = useState(false);
   const [confirmationPreferences, setConfirmationPreferences] =
     useState<ContactConfirmationPreferences>(defaultContactConfirmationPreferences);
   const [sessionConfirmedTypes, setSessionConfirmedTypes] =
@@ -582,26 +604,29 @@ function ReadyReview({
     setChangeSet(next);
   };
 
-  const prepare = async () => {
+  const prepare = async (): Promise<ContactWritePlan | null> => {
     setIsPreparing(true);
     setPrepareError(false);
     try {
-      setPlan(await onPrepare(changeSet));
+      const prepared = await onPrepare(changeSet);
+      setPlan(prepared);
+      return prepared;
     } catch {
       setPlan(null);
       setPrepareError(true);
+      return null;
     } finally {
       setIsPreparing(false);
     }
   };
 
-  const execute = async () => {
-    if (!plan || !onExecute || executionInFlight.current) return;
+  const execute = async (preparedPlan: ContactWritePlan | null = plan) => {
+    if (!preparedPlan || !onExecute || executionInFlight.current) return;
     executionInFlight.current = true;
     setIsExecuting(true);
     setExecutionError(null);
     try {
-      const result = await onExecute(plan);
+      const result = await onExecute(preparedPlan);
       setExecutionResult(result);
     } catch (error) {
       setExecutionError(error instanceof Error ? error.message : 'Simulator execution failed.');
@@ -610,6 +635,101 @@ function ReadyReview({
       setIsExecuting(false);
     }
   };
+
+  const continueFromReview = async () => {
+    const prepared = plan ?? await prepare();
+    if (!prepared || !onExecute) return;
+    if (needsExecutionConfirmation) setIsConfirmingExecution(true);
+    else await execute(prepared);
+  };
+
+  if (executionResult) {
+    const successful = executionResult.attentionCount === 0;
+    const undoableTransactions = [...executionResult.transactions]
+      .filter(({ phase }) => phase === 'completed')
+      .reverse();
+    const latestUndoableTransaction = undoableTransactions[0];
+    const resultContactId = latestUndoableTransaction
+      ? getCompletedTransactionResultContactId(latestUndoableTransaction)
+      : null;
+    const viewResultContact = async () => {
+      if (!resultContactId || isViewingContact) return;
+      setIsViewingContact(true);
+      setViewContactError(false);
+      try {
+        const changed = await new Contact(resultContactId).editWithForm();
+        if (changed) invalidateScan();
+      } catch {
+        setViewContactError(true);
+      } finally {
+        setIsViewingContact(false);
+      }
+    };
+    return (
+      <ThemedView style={styles.completionScreen}>
+        <SafeAreaView style={styles.completionSafeArea}>
+          <View style={styles.completionContent}>
+            <View style={[styles.completionMark, { backgroundColor: successful ? theme.primarySoft : theme.backgroundSelected }]}>
+              <ThemedText style={[styles.completionMarkText, { color: successful ? theme.success : theme.danger }]}>
+                {successful ? '✓' : '!'}
+              </ThemedText>
+            </View>
+            <ThemedText type="title" style={styles.completionTitle}>
+              {successful ? 'Contacts updated' : 'Some changes need attention'}
+            </ThemedText>
+            <ThemedText themeColor="textSecondary" style={styles.completionTitle}>
+              {executionResult.completedCount} verified · {executionResult.rolledBackCount} safely rolled back
+              {executionResult.attentionCount > 0 ? ` · ${executionResult.attentionCount} need review` : ''}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.completionTitle}>
+              Each accepted change has its own encrypted journal. Undo performs a fresh safety check before restoring anything.
+            </ThemedText>
+            {resultContactId && (
+              <Pressable
+                accessibilityRole="button"
+                disabled={isViewingContact}
+                onPress={() => void viewResultContact()}
+                style={[styles.applyButton, { backgroundColor: theme.primary }, isViewingContact && styles.disabled]}>
+                {isViewingContact
+                  ? <ActivityIndicator color="#FFFFFF" />
+                  : <ThemedText style={styles.applyText}>View contact</ThemedText>}
+              </Pressable>
+            )}
+            {viewContactError && (
+              <ThemedText type="small" themeColor="danger" style={styles.completionTitle}>
+                The native contact could not be opened. Scan again to refresh its directory record.
+              </ThemedText>
+            )}
+            {latestUndoableTransaction && (
+              <ThemedView type="backgroundElement" style={styles.completionUndoCard}>
+                <ThemedText type="subtitle">Changed contact</ThemedText>
+                <ThemedText type="smallBold">{completedTransactionTitle(latestUndoableTransaction)}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">Verified and journaled</ThemedText>
+                {undoableTransactions.length > 1 && (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {undoableTransactions.length - 1} earlier {undoableTransactions.length === 2 ? 'change is' : 'changes are'} available in Activity.
+                  </ThemedText>
+                )}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Preview Undo for ${completedTransactionTitle(latestUndoableTransaction)}`}
+                  onPress={() => router.push({ pathname: '/undo' as never, params: { workflowId: latestUndoableTransaction.id } })}
+                  style={[styles.completionUndoButton, { borderColor: theme.danger }]}>
+                  <ThemedText type="smallBold" themeColor="danger">Undo last change</ThemedText>
+                </Pressable>
+              </ThemedView>
+            )}
+            <Pressable accessibilityRole="button" onPress={() => router.push('/activity' as never)} style={styles.mergeTextButton}>
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>View all activity</ThemedText>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => router.replace('/')} style={styles.mergeTextButton}>
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>Scan again</ThemedText>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </ThemedView>
+    );
+  }
 
   return (
     <FlatList
@@ -722,9 +842,9 @@ function ReadyReview({
       ListFooterComponent={
         visibleChanges.length > 0 && !selectedMerge ? (
           <View style={styles.footer}>
-            {plan && (
+            {plan && showSafetyDetails && (
               <ThemedView type="backgroundElement" style={styles.planCard}>
-                <ThemedText type="smallBold">Dry run ready</ThemedText>
+                <ThemedText type="smallBold">Safety checks complete</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
                   Fresh contacts checked against the reviewed versions. No device writes occurred.
                 </ThemedText>
@@ -738,16 +858,12 @@ function ReadyReview({
                 </ThemedText>
               </ThemedView>
             )}
-            {executionResult && (
-              <ThemedView type="backgroundElement" style={styles.planCard}>
-                <ThemedText type="smallBold" themeColor={executionResult.attentionCount === 0 ? 'success' : 'danger'}>
-                  Independent transactions finished
+            {plan && (
+              <Pressable accessibilityRole="button" onPress={() => setShowSafetyDetails((visible) => !visible)}>
+                <ThemedText type="smallBold" style={{ color: theme.primary, textAlign: 'center' }}>
+                  {showSafetyDetails ? 'Hide safety details' : 'View safety details'}
                 </ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {executionResult.completedCount} completed · {executionResult.rolledBackCount} rolled back · {executionResult.attentionCount} need attention.
-                  Each change has its own encrypted journal and compensation plan.
-                </ThemedText>
-              </ThemedView>
+              </Pressable>
             )}
             {executionError && (
               <View style={[styles.prepareError, { borderColor: theme.danger }]}>
@@ -780,9 +896,9 @@ function ReadyReview({
                 counts.accepted === 0 ||
                 isPreparing ||
                 isSaving ||
-                plan !== null
+                isExecuting
               }
-              onPress={() => void prepare()}
+              onPress={() => void continueFromReview()}
               style={[
                 styles.applyButton,
                 { backgroundColor: theme.primary },
@@ -790,36 +906,19 @@ function ReadyReview({
                   counts.accepted === 0 ||
                   isPreparing ||
                   isSaving ||
-                  plan !== null) &&
+                  isExecuting) &&
                   styles.disabled,
               ]}>
-              {isPreparing ? (
+              {isPreparing || isExecuting ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <ThemedText style={styles.applyText}>
-                  {plan ? 'Dry run prepared' : 'Prepare dry run'}
-                </ThemedText>
+                <ThemedText style={styles.applyText}>Continue</ThemedText>
               )}
             </Pressable>
             <ThemedText type="small" themeColor="textSecondary" style={styles.footerNote}>
-              Review every suggestion and accept at least one. Production and physical-device writes remain disabled.
+              Contactifier verifies the latest contact state and backup before showing final confirmation.
+              Production and physical-device writes remain disabled.
             </ThemedText>
-            {plan && onExecute && !executionResult && (
-              <Pressable
-                accessibilityRole="button"
-                disabled={isExecuting}
-                onPress={() => {
-                  if (needsExecutionConfirmation) setIsConfirmingExecution(true);
-                  else void execute();
-                }}
-                style={[styles.simulatorExecuteButton, isExecuting && styles.disabled]}>
-                {isExecuting ? (
-                  <ActivityIndicator color="#B42318" />
-                ) : (
-                  <ThemedText type="smallBold" themeColor="danger">Apply to owned simulator fixtures</ThemedText>
-                )}
-              </Pressable>
-            )}
             {confirmation && (
               <ExecutionConfirmationSheet
                 visible={isConfirmingExecution}
@@ -1149,6 +1248,22 @@ export function ContactChangeReviewScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   safeArea: { flex: 1 },
+  completionScreen: { flex: 1 },
+  completionSafeArea: { flex: 1 },
+  completionContent: {
+    flex: 1,
+    width: '100%',
+    maxWidth: MaxContentWidth,
+    alignSelf: 'center',
+    justifyContent: 'center',
+    padding: Spacing.four,
+    gap: Spacing.three,
+  },
+  completionMark: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', alignSelf: 'center' },
+  completionMarkText: { fontSize: 42, lineHeight: 48, fontWeight: '700' },
+  completionTitle: { textAlign: 'center' },
+  completionUndoCard: { width: '100%', padding: Spacing.three, borderRadius: Spacing.three, gap: Spacing.two },
+  completionUndoButton: { minHeight: 48, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   listContent: {
     width: '100%',
     maxWidth: MaxContentWidth,

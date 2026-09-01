@@ -31,7 +31,11 @@ jest.mock('expo-contacts', () => ({
   requestPermissionsAsync: jest.fn(),
 }));
 
-import type { DeviceContactsApi, ExpoContactDetails } from '@/infrastructure/contacts/expo';
+import type {
+  DeviceContactGroupMembershipReader,
+  DeviceContactsApi,
+  ExpoContactDetails,
+} from '@/infrastructure/contacts/expo';
 import { ContactPermissionDeniedError } from '@/application';
 import {
   ExpoDeviceContactReader,
@@ -181,10 +185,57 @@ describe('Expo device contacts infrastructure', () => {
       getAllDetails: jest.fn().mockResolvedValue([expoContact()]),
     };
 
+    const groupMembershipReader: DeviceContactGroupMembershipReader = {
+      readMemberships: jest.fn(),
+    };
+
     await expect(
-      new ExpoDeviceContactReader(api).readContacts({ kind: 'device' }),
+      new ExpoDeviceContactReader(api, groupMembershipReader).readContacts({ kind: 'device' }),
     ).resolves.toMatchObject({ contacts: [{ displayName: 'Ada Lovelace' }] });
     expect(api.requestPermissions).not.toHaveBeenCalled();
+    expect(groupMembershipReader.readMemberships).not.toHaveBeenCalled();
+  });
+
+  it('enriches full-access contacts with memberships keyed by native contact id', async () => {
+    const api: DeviceContactsApi = {
+      getPermissions: jest.fn().mockResolvedValue(permission(true, true)),
+      requestPermissions: jest.fn(),
+      getAllDetails: jest.fn().mockResolvedValue([
+        expoContact({ id: 'native-1' }),
+        expoContact({ id: 'native-2' }),
+      ]),
+    };
+    const groupMembershipReader: DeviceContactGroupMembershipReader = {
+      readMemberships: jest.fn().mockResolvedValue(new Map([
+        ['native-1', ['Family', 'VIP']],
+      ])),
+    };
+
+    const result = await new ExpoDeviceContactReader(api, groupMembershipReader)
+      .readContacts({ kind: 'device' });
+
+    expect(groupMembershipReader.readMemberships).toHaveBeenCalledWith(
+      new Set(['native-1', 'native-2']),
+    );
+    expect(result.contacts.map(({ groups }) => groups)).toEqual([
+      ['Family', 'VIP'],
+      [],
+    ]);
+  });
+
+  it('fails a full-access scan when group membership cannot be read safely', async () => {
+    const api: DeviceContactsApi = {
+      getPermissions: jest.fn().mockResolvedValue(permission(true, true)),
+      requestPermissions: jest.fn(),
+      getAllDetails: jest.fn().mockResolvedValue([expoContact()]),
+    };
+    const groupMembershipReader: DeviceContactGroupMembershipReader = {
+      readMemberships: jest.fn().mockRejectedValue(new Error('Native group query failed')),
+    };
+
+    await expect(
+      new ExpoDeviceContactReader(api, groupMembershipReader).readContacts({ kind: 'device' }),
+    ).rejects.toThrow('Native group query failed');
   });
 
   it('does not reopen the prompt after a final denial', async () => {

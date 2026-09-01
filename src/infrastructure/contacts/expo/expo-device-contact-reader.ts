@@ -13,6 +13,7 @@ import {
 import { assertDomain, type ContactSourceRef } from '@/domain';
 
 import { DEVICE_CONTACT_FIELDS } from './device-contact-fields';
+import type { DeviceContactGroupMembershipReader } from './expo-ios-contact-group-membership-reader';
 import { mapExpoContact, type ExpoContactDetails } from './map-expo-contact';
 
 export interface DeviceContactsApi {
@@ -33,7 +34,10 @@ const expoContactsApi: DeviceContactsApi = {
 };
 
 export class ExpoDeviceContactReader implements ContactReader {
-  constructor(private readonly api: DeviceContactsApi = expoContactsApi) {}
+  constructor(
+    private readonly api: DeviceContactsApi = expoContactsApi,
+    private readonly groupMembershipReader?: DeviceContactGroupMembershipReader,
+  ) {}
 
   async readContacts(source: ContactSourceRef): Promise<ContactReadResult> {
     assertDomain(source.kind === 'device', 'Expo device reader requires a device contact source.');
@@ -57,9 +61,19 @@ export class ExpoDeviceContactReader implements ContactReader {
       if (batch.length < CONTACT_READ_BATCH_SIZE) break;
       offset += batch.length;
     }
+    const accessScope = permission.accessPrivileges === 'limited' ? 'limited' : 'all';
+    const memberships = accessScope === 'all' && this.groupMembershipReader
+      ? await this.groupMembershipReader.readMemberships(
+        new Set(contacts.map((contact) => contact.id)),
+      )
+      : new Map<string, readonly string[]>();
+
     return {
-      contacts: contacts.map((contact) => mapExpoContact(contact, source)),
-      accessScope: permission.accessPrivileges === 'limited' ? 'limited' : 'all',
+      contacts: contacts.map((contact) => ({
+        ...mapExpoContact(contact, source),
+        groups: memberships.get(contact.id) ?? [],
+      })),
+      accessScope,
     };
   }
 }

@@ -1,4 +1,4 @@
-import { Contact, getPermissionsAsync, type CreateContactRecord } from 'expo-contacts';
+import { Contact, Group, getPermissionsAsync, type CreateContactRecord } from 'expo-contacts';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
@@ -54,11 +54,18 @@ export class ExpoIosCertificationFixtureRepository implements IosFixtureReposito
 }
 
 export class ExpoIosCertificationFixtureGateway implements IosFixtureGateway {
+  constructor(private readonly fixturePhotoUri?: string) {}
+
   async create(spec: IosFixtureSpec): Promise<string> {
     await assertWritable();
+    if (spec.photoKey && !this.fixturePhotoUri) throw new Error('Certification fixture photo is unavailable.');
     const value: CreateContactRecord = {
       givenName: spec.givenName,
+      middleName: spec.middleName,
       familyName: spec.familyName,
+      prefix: spec.prefix,
+      suffix: spec.suffix,
+      phoneticGivenName: spec.phoneticGivenName,
       phones: spec.phones.map(({ label, value }) => ({ label, number: value })),
       emails: spec.emails.map(({ label, value }) => ({ label, address: value })),
       company: spec.company,
@@ -72,9 +79,31 @@ export class ExpoIosCertificationFixtureGateway implements IosFixtureGateway {
         postcode: spec.address.postalCode,
         country: spec.address.country,
       }] : [],
-      urlAddresses: [{ label: 'Contactifier ownership', url: spec.marker }],
+      urlAddresses: [
+        { label: 'Contactifier ownership', url: spec.marker },
+        ...(spec.website ? [{ label: spec.website.label, url: spec.website.value }] : []),
+      ],
+      birthday: spec.birthday,
+      dates: spec.event ? [{ label: spec.event.label, date: spec.event.date }] : [],
+      image: spec.photoKey ? this.fixturePhotoUri : undefined,
     };
-    return (await Contact.create(value)).id;
+    const contact = await Contact.create(value);
+    try {
+      for (const name of spec.groups ?? []) {
+        const group = await this.resolveOrCreateOwnedGroup(name);
+        await group.addContact(contact);
+      }
+    } catch (cause) {
+      try {
+        await contact.delete();
+      } catch {
+        throw new Error(`Fixture contact ${contact.id} has an unknown group setup outcome.`, {
+          cause,
+        });
+      }
+      throw cause;
+    }
+    return contact.id;
   }
 
   async findByMarker(marker: string): Promise<readonly IosFixtureCandidate[]> {
@@ -89,12 +118,38 @@ export class ExpoIosCertificationFixtureGateway implements IosFixtureGateway {
     }
   }
 
-  async deleteIfOwned(input: { readonly id: string; readonly marker: string; readonly expectedGivenName: string }): Promise<boolean> {
+  async deleteIfOwned(input: {
+    readonly id: string;
+    readonly marker: string;
+    readonly expectedGivenName: string;
+    readonly groups: readonly string[];
+  }): Promise<boolean> {
     await assertWritable();
     const native = new Contact(input.id);
     const current = candidate(await native.getDetails(DEVICE_CONTACT_FIELDS));
     if (current.givenName !== input.expectedGivenName || !current.markerValues.includes(input.marker)) return false;
     await native.delete();
+    for (const name of input.groups) await this.deleteOwnedGroupIfEmpty(name);
     return true;
+  }
+
+  private async resolveOrCreateOwnedGroup(name: string): Promise<Group> {
+    const matches = await this.groupsNamed(name);
+    if (matches.length > 1) throw new Error(`Certification group ${name} is ambiguous.`);
+    return matches[0] ?? Group.create(name);
+  }
+
+  private async deleteOwnedGroupIfEmpty(name: string): Promise<void> {
+    const matches = await this.groupsNamed(name);
+    if (matches.length !== 1) return;
+    if ((await matches[0].getContacts({ limit: 1 })).length === 0) await matches[0].delete();
+  }
+
+  private async groupsNamed(name: string): Promise<Group[]> {
+    const matches: Group[] = [];
+    for (const group of await Group.getAll()) {
+      if ((await group.getName())?.trim() === name.trim()) matches.push(group);
+    }
+    return matches;
   }
 }

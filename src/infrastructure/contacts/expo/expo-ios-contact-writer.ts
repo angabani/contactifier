@@ -27,6 +27,8 @@ import {
 } from '@/domain';
 
 import { DEVICE_CONTACT_FIELDS } from './device-contact-fields';
+import type { DeviceContactGroupMembershipReader } from './expo-ios-contact-group-membership-reader';
+import type { ExpoIosContactGroupMembershipWriter } from './expo-ios-contact-group-membership-writer';
 import {
   mapCanonicalContactToExpoCreate,
   mapCanonicalContactToExpoPatch,
@@ -73,7 +75,11 @@ const RECONCILIATION_BATCH_SIZE = 500;
 export class ExpoIosContactWriter
   implements ContactWriter, ContactWriteReconciler, ContactWriteVerifier
 {
-  constructor(private readonly api: ExpoContactWriterApi = expoApi) {}
+  constructor(
+    private readonly api: ExpoContactWriterApi = expoApi,
+    private readonly groupReader?: DeviceContactGroupMembershipReader,
+    private readonly groupWriter?: Pick<ExpoIosContactGroupMembershipWriter, 'synchronize'>,
+  ) {}
 
   async apply(operation: ContactWriteOperation): Promise<ContactWriteReceipt> {
     await this.assertWritable();
@@ -81,6 +87,18 @@ export class ExpoIosContactWriter
       const created = await this.api.create(
         mapCanonicalContactToExpoCreate(operation.contact, operation.reconciliationMarker),
       );
+      try {
+        await this.synchronizeGroups(created.id, [], operation.contact.groups);
+      } catch (cause) {
+        try {
+          await created.delete();
+        } catch {
+          throw new Error(`Created iOS contact ${created.id} has an unknown outcome.`, { cause });
+        }
+        throw new ContactWriteNotAppliedError(
+          `Created iOS contact ${created.id} was removed after its groups could not be applied.`,
+        );
+      }
       return { operationId: operation.id, sourceContactId: created.id };
     }
     const native = this.api.contact(operation.sourceContactId);
@@ -89,7 +107,7 @@ export class ExpoIosContactWriter
       throw new ContactWriteNotAppliedError('The iOS contact changed after preflight.');
     }
     if (operation.kind === 'delete') await native.delete();
-    else await native.patch(mapCanonicalContactToExpoPatch(operation.after));
+    else await this.updateContact(native, operation.before, operation.after);
     return { operationId: operation.id, sourceContactId: operation.sourceContactId };
   }
 
@@ -108,15 +126,27 @@ export class ExpoIosContactWriter
     }
     if (compensation.kind === 'recreate-deleted') {
       const created = await this.api.create(mapCanonicalContactToExpoCreate(compensation.contact));
+      try {
+        await this.synchronizeGroups(created.id, [], compensation.contact.groups);
+      } catch (cause) {
+        try {
+          await created.delete();
+        } catch {
+          throw new Error(`Recreated iOS contact ${created.id} has an unknown outcome.`, { cause });
+        }
+        throw new ContactWriteNotAppliedError(
+          `Recreated iOS contact ${created.id} was removed after its groups could not be restored.`,
+        );
+      }
       return {
         operationId: compensation.operationId,
         kind: compensation.kind,
         restoredSourceContactId: created.id,
       };
     }
-    await this.api
-      .contact(receipt.sourceContactId)
-      .patch(mapCanonicalContactToExpoPatch(compensation.contact));
+    const native = this.api.contact(receipt.sourceContactId);
+    const current = await this.read(native, compensation.contact.recordRef.source);
+    await this.updateContact(native, current, compensation.contact);
     return {
       operationId: compensation.operationId,
       kind: compensation.kind,
@@ -246,10 +276,60 @@ export class ExpoIosContactWriter
 
   private async read(contact: ExpoMutableContact, source: ContactSourceRef): Promise<CanonicalContact> {
     try {
-      return mapExpoContact(await contact.getDetails(), source);
+      const mapped = mapExpoContact(await contact.getDetails(), source);
+      if (!this.groupReader) return mapped;
+      const memberships = await this.groupReader.readMemberships(new Set([contact.id]));
+      return { ...mapped, groups: memberships.get(contact.id) ?? [] };
     } catch {
       throw new ContactWriteNotAppliedError(`Contact ${contact.id} is unavailable.`);
     }
+  }
+
+  private async updateContact(
+    native: ExpoMutableContact,
+    before: CanonicalContact,
+    after: CanonicalContact,
+  ): Promise<void> {
+    const ordinaryChanged = !contactsSemanticallyEqual(
+      this.withoutGroups(before),
+      this.withoutGroups(after),
+    );
+    if (ordinaryChanged) await native.patch(mapCanonicalContactToExpoPatch(after));
+    try {
+      await this.synchronizeGroups(native.id, before.groups, after.groups);
+    } catch (cause) {
+      if (!ordinaryChanged) throw cause;
+      try {
+        await native.patch(mapCanonicalContactToExpoPatch(before));
+      } catch {
+        throw new Error(`Updated iOS contact ${native.id} has an unknown outcome.`, { cause });
+      }
+      if (cause instanceof ContactWriteNotAppliedError) throw cause;
+      throw new Error(`iOS group membership has an unknown outcome for contact ${native.id}.`, {
+        cause,
+      });
+    }
+  }
+
+  private async synchronizeGroups(
+    sourceContactId: string,
+    before: readonly string[],
+    after: readonly string[],
+  ): Promise<void> {
+    const normalizedBefore = normalizedGroups(before);
+    const normalizedAfter = normalizedGroups(after);
+    if (
+      normalizedBefore.length === normalizedAfter.length &&
+      normalizedBefore.every((value, index) => value === normalizedAfter[index])
+    ) return;
+    if (!this.groupWriter) {
+      throw new ContactWriteNotAppliedError('iOS group membership writer is unavailable.');
+    }
+    await this.groupWriter.synchronize(sourceContactId, normalizedBefore, normalizedAfter);
+  }
+
+  private withoutGroups(contact: CanonicalContact): CanonicalContact {
+    return { ...contact, groups: [] };
   }
 
   private withSourceId(contact: CanonicalContact, sourceContactId: string): CanonicalContact {
@@ -259,4 +339,9 @@ export class ExpoIosContactWriter
   private withoutMarker(contact: CanonicalContact, marker: string): CanonicalContact {
     return { ...contact, urls: contact.urls.filter(({ value }) => value !== marker) };
   }
+}
+
+function normalizedGroups(groups: readonly string[]): string[] {
+  return [...new Set(groups.map((group) => group.trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
 }

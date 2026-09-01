@@ -118,6 +118,10 @@ function apiFor(current: CanonicalContact, accessPrivileges: 'all' | 'limited' =
   return { api, create, patch, remove };
 }
 
+function groupWriter() {
+  return { synchronize: jest.fn().mockResolvedValue(undefined) };
+}
+
 describe('Expo iOS contact writer boundary', () => {
   it('maps supported canonical fields without writing notes, groups, or remote photos', () => {
     const mapped = mapCanonicalContactToExpoCreate(contact('native-a'));
@@ -147,8 +151,9 @@ describe('Expo iOS contact writer boundary', () => {
       contact: current,
       reconciliationMarker: 'contactifier://write/snapshot/create-1',
     };
+    const groups = groupWriter();
 
-    await expect(new ExpoIosContactWriter(api).apply(operation)).resolves.toEqual({
+    await expect(new ExpoIosContactWriter(api, undefined, groups).apply(operation)).resolves.toEqual({
       operationId: 'create-1',
       sourceContactId: 'created-ios-id',
     });
@@ -163,6 +168,7 @@ describe('Expo iOS contact writer boundary', () => {
         ],
       }),
     );
+    expect(groups.synchronize).toHaveBeenCalledWith('created-ios-id', [], ['group-1']);
   });
 
   it('reconciles an interrupted create only from one matching durable marker', async () => {
@@ -293,9 +299,10 @@ describe('Expo iOS contact writer boundary', () => {
   it('records the replacement iOS identifier when recreating a deleted contact', async () => {
     const before = contact('deleted-ios-id');
     const { api, create } = apiFor(before);
+    const groups = groupWriter();
 
     await expect(
-      new ExpoIosContactWriter(api).compensate(
+      new ExpoIosContactWriter(api, undefined, groups).compensate(
         { kind: 'recreate-deleted', operationId: 'delete-1', contact: before },
         { operationId: 'delete-1', sourceContactId: 'deleted-ios-id' },
       ),
@@ -305,6 +312,61 @@ describe('Expo iOS contact writer boundary', () => {
       restoredSourceContactId: 'created-ios-id',
     });
     expect(create).toHaveBeenCalledTimes(1);
+    expect(groups.synchronize).toHaveBeenCalledWith('created-ios-id', [], ['group-1']);
+  });
+
+  it('enriches native reads and applies group-only updates without patching contact fields', async () => {
+    const before = { ...contact('native-a'), notes: [], photos: [], groups: ['Family'] };
+    const after = { ...before, groups: ['VIP'] };
+    const { api, patch } = apiFor(before);
+    const groupReader = {
+      readMemberships: jest.fn().mockResolvedValue(new Map([['native-a', ['Family']]])),
+    };
+    const groups = groupWriter();
+    const operation: ContactWriteOperation = {
+      id: 'update-groups',
+      changeId: 'change-groups',
+      kind: 'update',
+      sourceContactId: 'native-a',
+      before,
+      after,
+    };
+
+    await new ExpoIosContactWriter(api, groupReader, groups).apply(operation);
+
+    expect(patch).not.toHaveBeenCalled();
+    expect(groups.synchronize).toHaveBeenCalledWith('native-a', ['Family'], ['VIP']);
+  });
+
+  it('restores ordinary fields when a group update is safely rejected', async () => {
+    const before = { ...contact('native-a'), notes: [], photos: [], groups: ['Family'] };
+    const after = {
+      ...before,
+      displayName: 'Ada Updated',
+      name: { ...before.name, givenName: 'Ada Updated' },
+      groups: ['VIP'],
+    };
+    const { api, patch } = apiFor(before);
+    const groupReader = {
+      readMemberships: jest.fn().mockResolvedValue(new Map([['native-a', ['Family']]])),
+    };
+    const groups = {
+      synchronize: jest.fn().mockRejectedValue(new ContactWriteNotAppliedError('Group rejected')),
+    };
+    const operation: ContactWriteOperation = {
+      id: 'update-fields-groups',
+      changeId: 'change-fields-groups',
+      kind: 'update',
+      sourceContactId: 'native-a',
+      before,
+      after,
+    };
+
+    await expect(
+      new ExpoIosContactWriter(api, groupReader, groups).apply(operation),
+    ).rejects.toBeInstanceOf(ContactWriteNotAppliedError);
+    expect(patch).toHaveBeenCalledTimes(2);
+    expect(patch).toHaveBeenLastCalledWith(expect.objectContaining({ givenName: 'Ada Lovelace' }));
   });
 
   it('rejects limited access and stale targets before mutation', async () => {

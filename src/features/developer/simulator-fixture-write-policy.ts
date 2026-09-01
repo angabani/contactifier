@@ -9,8 +9,20 @@ function isOwnedFixture(contact: CanonicalContact): boolean {
   );
 }
 
+export function isSimulatorFixtureWritePlanOwned(plan: ContactWritePlan): boolean {
+  return plan.operations.length > 0 && plan.operations.every((operation) => {
+    const contacts = operation.kind === 'create'
+      ? [operation.contact]
+      : operation.kind === 'update'
+        ? [operation.before, operation.after]
+        : [operation.before];
+    return contacts.every(isOwnedFixture);
+  });
+}
+
 export function assertSimulatorFixtureWritePlan(plan: ContactWritePlan): void {
   if (plan.operations.length === 0) throw new Error('Simulator fixture plan has no operations.');
+  if (isSimulatorFixtureWritePlanOwned(plan)) return;
   for (const operation of plan.operations) {
     const contacts = operation.kind === 'create'
       ? [operation.contact]
