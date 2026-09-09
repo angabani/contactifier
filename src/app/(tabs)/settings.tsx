@@ -1,3 +1,5 @@
 import { ContactConfirmationSettingsScreen } from '@/features/settings/contact-confirmation-settings-screen';
 
-export default ContactConfirmationSettingsScreen;
+export default function SettingsRoute() {
+  return <ContactConfirmationSettingsScreen showDone={false} />;
+}

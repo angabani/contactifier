@@ -116,4 +116,20 @@ describe('exact duplicate analysis', () => {
     expect(result.isTruncated).toBe(true);
     expect(result.matchLimit).toBe(25);
   });
+
+  it('limits incremental results to pairs touching changed contacts', () => {
+    const result = analyzeExactDuplicates(
+      snapshot([
+        contact('old-a', ['2125550100']),
+        contact('old-b', ['2125550100']),
+        contact('changed', ['2125550100']),
+      ]),
+      undefined,
+      new Set(['changed']),
+    );
+    expect(result.matches.map(({ contactIds }) => contactIds)).toEqual([
+      ['changed', 'old-a'],
+      ['changed', 'old-b'],
+    ]);
+  });
 });

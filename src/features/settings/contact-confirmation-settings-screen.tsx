@@ -13,6 +13,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useSmartMatching } from '@/features/smart-matching/use-smart-matching';
 
 const rows: readonly { type: ContactConfirmationType; title: string; detail: string }[] = [
   { type: 'merge', title: 'Confirm merges', detail: 'Merges update one contact and remove the other source cards.' },
@@ -22,9 +23,10 @@ const rows: readonly { type: ContactConfirmationType; title: string; detail: str
   { type: 'undo', title: 'Confirm Undo', detail: 'Undo is itself a verified native transaction.' },
 ];
 
-export function ContactConfirmationSettingsScreen() {
+export function ContactConfirmationSettingsScreen({ showDone = true }: { readonly showDone?: boolean }) {
   const router = useRouter();
   const theme = useTheme();
+  const smartMatching = useSmartMatching();
   const [preferences, setPreferences] = useState<ContactConfirmationPreferences | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState(false);
@@ -70,15 +72,52 @@ export function ContactConfirmationSettingsScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.header}>
-            <Pressable accessibilityRole="button" onPress={() => router.back()}>
-              <ThemedText type="smallBold" style={{ color: theme.primary }}>Done</ThemedText>
-            </Pressable>
-            <ThemedText type="title">Confirmations</ThemedText>
+            {showDone && (
+              <Pressable accessibilityRole="button" onPress={() => router.back()}>
+                <ThemedText type="smallBold" style={{ color: theme.primary }}>Done</ThemedText>
+              </Pressable>
+            )}
+            <ThemedText type="title">Settings</ThemedText>
             <ThemedText themeColor="textSecondary">
-              These settings only control whether Contactifier asks immediately before applying.
-              All backup, freshness, journal, verification, and rollback checks remain mandatory.
+              Control smart matching and confirmations. Contactifier safety checks always stay on.
             </ThemedText>
           </View>
+          {smartMatching.state && (
+            <View style={styles.section}>
+              <ThemedText type="smallBold" themeColor="textSecondary">MATCHING</ThemedText>
+              <ThemedView type="backgroundElement" style={styles.group}>
+                <View style={styles.row}>
+                  <View style={styles.copy}>
+                    <ThemedText type="smallBold">Smart matching</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {smartMatching.state.status === 'unavailable'
+                        ? 'No compatible model is available. Exact matching still works.'
+                        : smartMatching.state.status === 'downloading'
+                          ? 'Downloading the private on-device model…'
+                          : smartMatching.state.status === 'verifying'
+                            ? 'Checking the model before it can be used…'
+                          : smartMatching.state.status === 'ready'
+                            ? 'Finds harder duplicates privately on this device.'
+                            : smartMatching.state.status === 'failed'
+                              ? 'Download failed. Exact matching remains available.'
+                              : 'Download an optional private model for harder matches.'}
+                    </ThemedText>
+                  </View>
+                  <Switch
+                    accessibilityLabel="Smart matching"
+                    disabled={smartMatching.state.status === 'unavailable' || ['downloading', 'verifying'].includes(smartMatching.state.status)}
+                    value={smartMatching.state.consent === 'enabled'}
+                    onValueChange={(enabled) => {
+                      if (enabled) void smartMatching.enable();
+                      else void smartMatching.disable();
+                    }}
+                  />
+                </View>
+              </ThemedView>
+            </View>
+          )}
+          <View style={styles.section}>
+            <ThemedText type="smallBold" themeColor="textSecondary">CONFIRMATIONS</ThemedText>
           {!preferences ? <ActivityIndicator color={theme.primary} /> : (
             <ThemedView type="backgroundElement" style={styles.group}>
               {rows.map((row, index) => (
@@ -108,6 +147,7 @@ export function ContactConfirmationSettingsScreen() {
               ))}
             </ThemedView>
           )}
+          </View>
           {error && <ThemedText type="small" themeColor="danger">Preferences could not be saved. Your previous settings remain active.</ThemedText>}
           <Pressable accessibilityRole="button" disabled={isSaving} onPress={() => void reset()} style={styles.reset}>
             <ThemedText type="smallBold" style={{ color: theme.primary }}>Reset to confirm every time</ThemedText>
@@ -123,6 +163,7 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   content: { width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center', padding: Spacing.four, gap: Spacing.four },
   header: { gap: Spacing.two },
+  section: { gap: Spacing.two },
   group: { borderRadius: Spacing.three, paddingHorizontal: Spacing.three, overflow: 'hidden' },
   row: { minHeight: 84, flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.two },
   divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#C7C7CC' },

@@ -42,6 +42,10 @@ yarn-error.*
 
 # test and tooling output
 coverage/
+.venv/
+modeling/output/
+__pycache__/
+*.py[cod]
 .eslintcache
 .turbo/
 

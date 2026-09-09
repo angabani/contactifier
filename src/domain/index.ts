@@ -105,6 +105,23 @@ export type {
   ExactDuplicateSignal,
   ExactDuplicateSignalKind,
 } from './merging/exact-duplicate-analysis';
+export {
+  analyzeContactMatches,
+  createContactMatchMatrix,
+  deterministicContactMatchProbability,
+  DEFAULT_CONTACT_MATCH_PAIR_LIMIT,
+} from './merging/contact-match-matrix';
+export { createLinearContactProbabilityModel } from './merging/linear-contact-probability-model';
+export { createTreeEnsembleContactProbabilityModel } from './merging/tree-ensemble-contact-probability-model';
+export { createContactProbabilityModel } from './merging/create-contact-probability-model';
+export type {
+  ContactMatchAnalysis,
+  ContactMatchCandidate,
+  ContactMatchFeature,
+  ContactMatchFeatureKind,
+  ContactMatchMatrix,
+  ContactProbabilityModel,
+} from './merging/contact-match-matrix';
 export { createConfidenceScore } from './shared/confidence-score';
 export type { ConfidenceScore } from './shared/confidence-score';
 export { analyzeContactQuality } from './quality/contact-quality-analysis';

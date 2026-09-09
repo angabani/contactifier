@@ -94,7 +94,7 @@ function preferredNamedContact(contacts: readonly CanonicalContact[]): Canonical
   );
 }
 
-function mergeContacts(contacts: readonly CanonicalContact[]): CanonicalContact {
+export function mergeContactsForProposal(contacts: readonly CanonicalContact[]): CanonicalContact {
   const survivor = contacts[0];
   const preferredName = preferredNamedContact(contacts);
   return {
@@ -158,7 +158,7 @@ export function createExactDuplicateChangeSet({
       decision: 'pending',
       contactIds,
       before,
-      after: mergeContacts(before),
+      after: mergeContactsForProposal(before),
     };
   });
 

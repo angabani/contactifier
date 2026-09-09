@@ -63,6 +63,7 @@ function indexValues(
 export function analyzeExactDuplicates(
   snapshot: ContactSnapshot,
   matchLimit = DEFAULT_EXACT_DUPLICATE_MATCH_LIMIT,
+  focusContactIds?: ReadonlySet<ContactId>,
 ): ExactDuplicateAnalysis {
   if (!Number.isSafeInteger(matchLimit) || matchLimit <= 0) {
     throw new Error('Exact duplicate match limit must be a positive integer.');
@@ -102,6 +103,7 @@ export function analyzeExactDuplicates(
             sortedContactIds[left],
             sortedContactIds[right],
           ];
+          if (focusContactIds && !contactPair.some((id) => focusContactIds.has(id))) continue;
           const key = contactPair.join('\u0000');
           if (!pairSignals.has(key) && pairSignals.size >= matchLimit) {
             isTruncated = true;

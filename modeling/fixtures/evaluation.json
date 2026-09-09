@@ -1,0 +1,355 @@
+{
+  "dataset": {
+    "rows": 3000,
+    "features": [
+      "email",
+      "emailLocalPart",
+      "emailDomain",
+      "phone",
+      "phoneSuffix",
+      "phoneCountry",
+      "name",
+      "givenName",
+      "familyName",
+      "nameOrder",
+      "phoneticName",
+      "nickname",
+      "organization",
+      "address",
+      "sameSource"
+    ],
+    "syntheticBootstrapOnly": true
+  },
+  "models": {
+    "logistic": {
+      "rocAuc": 1.0,
+      "averagePrecision": 1.0,
+      "brier": 7.084485538689798e-06,
+      "recommendedThreshold": 0.013932564163745515,
+      "recommendedPrecision": 1.0,
+      "recommendedRecall": 1.0,
+      "falseMerges": 0,
+      "scenarioFalseMerges": {
+        "common-name": 0,
+        "conflicting-country": 0,
+        "country-code-variation": 0,
+        "email-variation": 0,
+        "exact-phone": 0,
+        "generic-inbox": 0,
+        "multi-clue": 0,
+        "phonetic-name": 0,
+        "reordered-name": 0,
+        "shared-business": 0,
+        "shared-household": 0,
+        "unrelated": 0
+      },
+      "calibration": {
+        "slope": 1.7985196962881318,
+        "intercept": -0.1645396444252673
+      }
+    },
+    "lightgbm": {
+      "rocAuc": 1.0,
+      "averagePrecision": 1.0,
+      "brier": 0.00013164635647449355,
+      "recommendedThreshold": 0.9079843714166782,
+      "recommendedPrecision": 1.0,
+      "recommendedRecall": 1.0,
+      "falseMerges": 0,
+      "scenarioFalseMerges": {
+        "common-name": 0,
+        "conflicting-country": 0,
+        "country-code-variation": 0,
+        "email-variation": 0,
+        "exact-phone": 0,
+        "generic-inbox": 0,
+        "multi-clue": 0,
+        "phonetic-name": 0,
+        "reordered-name": 0,
+        "shared-business": 0,
+        "shared-household": 0,
+        "unrelated": 0
+      },
+      "calibration": {
+        "slope": 2.1781870823050213,
+        "intercept": -1.3766500754879265
+      }
+    },
+    "xgboost": {
+      "rocAuc": 1.0,
+      "averagePrecision": 0.9999999999999999,
+      "brier": 0.000175834584935013,
+      "recommendedThreshold": 0.8511744578968226,
+      "recommendedPrecision": 1.0,
+      "recommendedRecall": 1.0,
+      "falseMerges": 0,
+      "scenarioFalseMerges": {
+        "common-name": 0,
+        "conflicting-country": 0,
+        "country-code-variation": 0,
+        "email-variation": 0,
+        "exact-phone": 0,
+        "generic-inbox": 0,
+        "multi-clue": 0,
+        "phonetic-name": 0,
+        "reordered-name": 0,
+        "shared-business": 0,
+        "shared-household": 0,
+        "unrelated": 0
+      },
+      "calibration": {
+        "slope": 2.303267083424509,
+        "intercept": -1.3343377579382008
+      }
+    }
+  },
+  "promotionEligible": false,
+  "lightgbmExport": {
+    "path": "modeling/fixtures/bootstrap-lightgbm-v1.model",
+    "bytes": 110834,
+    "maximumProbabilityError": 0.0,
+    "conformanceRows": 467,
+    "goldenVectors": [
+      {
+        "features": {
+          "email": 0.0,
+          "emailLocalPart": 0.9187759486876964,
+          "emailDomain": 1.0,
+          "phone": null,
+          "phoneSuffix": null,
+          "phoneCountry": null,
+          "name": 0.7849884881981213,
+          "givenName": 0.8316161499419774,
+          "familyName": 0.8669629786440376,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": null,
+          "organization": null,
+          "address": null,
+          "sameSource": 0.0
+        },
+        "probability": 0.9968774776399612
+      },
+      {
+        "features": {
+          "email": null,
+          "emailLocalPart": null,
+          "emailDomain": null,
+          "phone": null,
+          "phoneSuffix": 1.0,
+          "phoneCountry": 1.0,
+          "name": 0.1978483705738313,
+          "givenName": 0.08849222666446907,
+          "familyName": 0.23106733057980433,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": null,
+          "organization": null,
+          "address": 0.936430668167292,
+          "sameSource": 1.0
+        },
+        "probability": 5.280879820428189e-05
+      },
+      {
+        "features": {
+          "email": null,
+          "emailLocalPart": null,
+          "emailDomain": null,
+          "phone": null,
+          "phoneSuffix": null,
+          "phoneCountry": null,
+          "name": 1.0,
+          "givenName": 0.7622327785067445,
+          "familyName": 0.9138079269159397,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": 0.6901358663790157,
+          "organization": 0.8409599443749289,
+          "address": 0.8124137712379297,
+          "sameSource": 1.0
+        },
+        "probability": 0.9805140597616924
+      },
+      {
+        "features": {
+          "email": null,
+          "emailLocalPart": null,
+          "emailDomain": null,
+          "phone": 1.0,
+          "phoneSuffix": 1.0,
+          "phoneCountry": 1.0,
+          "name": 0.8697151304218907,
+          "givenName": 1.0,
+          "familyName": 0.841775756083809,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": null,
+          "organization": null,
+          "address": null,
+          "sameSource": 0.0
+        },
+        "probability": 0.9967641315503195
+      },
+      {
+        "features": {
+          "email": null,
+          "emailLocalPart": null,
+          "emailDomain": null,
+          "phone": null,
+          "phoneSuffix": null,
+          "phoneCountry": null,
+          "name": 0.8842006369366409,
+          "givenName": 0.780673887285686,
+          "familyName": 0.9163301699402344,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": 0.8412795718586329,
+          "organization": 0.8490807196179764,
+          "address": 0.7134252056689498,
+          "sameSource": 1.0
+        },
+        "probability": 0.9962172953343945
+      },
+      {
+        "features": {
+          "email": null,
+          "emailLocalPart": null,
+          "emailDomain": null,
+          "phone": 0.0,
+          "phoneSuffix": 1.0,
+          "phoneCountry": 1.0,
+          "name": 0.7909853865849082,
+          "givenName": 0.966494159303051,
+          "familyName": 0.899696251559991,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": null,
+          "organization": null,
+          "address": null,
+          "sameSource": 0.0
+        },
+        "probability": 0.9981894767545567
+      },
+      {
+        "features": {
+          "email": null,
+          "emailLocalPart": null,
+          "emailDomain": null,
+          "phone": null,
+          "phoneSuffix": null,
+          "phoneCountry": null,
+          "name": 0.7197460263013282,
+          "givenName": 0.1,
+          "familyName": 0.1,
+          "nameOrder": 1.0,
+          "phoneticName": null,
+          "nickname": null,
+          "organization": null,
+          "address": null,
+          "sameSource": 1.0
+        },
+        "probability": 0.9962751398566086
+      },
+      {
+        "features": {
+          "email": 0.0,
+          "emailLocalPart": 0.9098509422002,
+          "emailDomain": 1.0,
+          "phone": null,
+          "phoneSuffix": null,
+          "phoneCountry": null,
+          "name": 0.9545822495366426,
+          "givenName": 0.9589279414687126,
+          "familyName": 0.9222019071608126,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": null,
+          "organization": null,
+          "address": null,
+          "sameSource": 0.0
+        },
+        "probability": 0.9811251500585796
+      },
+      {
+        "features": {
+          "email": null,
+          "emailLocalPart": null,
+          "emailDomain": null,
+          "phone": null,
+          "phoneSuffix": null,
+          "phoneCountry": null,
+          "name": 0.6098077051835413,
+          "givenName": 1.0,
+          "familyName": 0.9249011802154449,
+          "nameOrder": null,
+          "phoneticName": 1.0,
+          "nickname": null,
+          "organization": null,
+          "address": null,
+          "sameSource": 1.0
+        },
+        "probability": 0.9954041653384337
+      },
+      {
+        "features": {
+          "email": 0.0,
+          "emailLocalPart": 0.7858409057090459,
+          "emailDomain": 1.0,
+          "phone": null,
+          "phoneSuffix": null,
+          "phoneCountry": null,
+          "name": 0.8145789362814015,
+          "givenName": 0.8040354546059054,
+          "familyName": 0.9947557685160066,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": null,
+          "organization": null,
+          "address": null,
+          "sameSource": 0.0
+        },
+        "probability": 0.9968774776399612
+      },
+      {
+        "features": {
+          "email": 0.0,
+          "emailLocalPart": 0.905429685884932,
+          "emailDomain": 1.0,
+          "phone": null,
+          "phoneSuffix": null,
+          "phoneCountry": null,
+          "name": 0.7995788568825948,
+          "givenName": 0.8717394893714894,
+          "familyName": 0.9422610522163802,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": null,
+          "organization": null,
+          "address": null,
+          "sameSource": 1.0
+        },
+        "probability": 0.9968774776399612
+      },
+      {
+        "features": {
+          "email": null,
+          "emailLocalPart": null,
+          "emailDomain": null,
+          "phone": null,
+          "phoneSuffix": 1.0,
+          "phoneCountry": 1.0,
+          "name": 0.07488660707874856,
+          "givenName": 0.31872133627325916,
+          "familyName": 0.3542422092707362,
+          "nameOrder": null,
+          "phoneticName": null,
+          "nickname": null,
+          "organization": null,
+          "address": 0.9711304125737317,
+          "sameSource": 0.0
+        },
+        "probability": 5.280879820428189e-05
+      }
+    ]
+  }
+}

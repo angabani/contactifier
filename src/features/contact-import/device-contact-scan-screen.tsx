@@ -9,23 +9,44 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import Constants, { AppOwnership } from 'expo-constants';
+import * as Device from 'expo-device';
+import { useEffect, useMemo, useRef, useState } from 'react';
+
+import { createBeautificationChangeSet } from '@/application';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { SuccessCelebration, TaskProgress } from '@/components/task-progress';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { resolveHomePriority } from '@/features/home/resolve-home-priority';
+import { useSmartMatching } from '@/features/smart-matching/use-smart-matching';
+import {
+  IOS_SIMULATOR_LOCAL_MODEL_TOKEN,
+  IOS_SIMULATOR_DISCARD_REVIEW_TOKEN,
+  IOS_SIMULATOR_READ_ONLY_SCAN_TOKEN,
+  IOS_SIMULATOR_RESUME_REVIEW_TOKEN,
+} from '@/features/developer/ios-certification-policy';
 
 import { useDeviceContactScanSession } from './use-device-contact-scan';
 
 export function DeviceContactScanScreen() {
+  const { discard: discardToken, resume: resumeToken, scan: scanToken, smartModel: smartModelToken } = useLocalSearchParams<{
+    discard?: string;
+    resume?: string;
+    scan?: string;
+    smartModel?: string;
+  }>();
   const theme = useTheme();
   const router = useRouter();
+  const smartMatching = useSmartMatching();
+  const [showScanDetails, setShowScanDetails] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
   const {
     state,
     scan,
-    loadDemo,
     resumableWorkflow,
     isResuming,
     resumeError,
@@ -33,7 +54,15 @@ export function DeviceContactScanScreen() {
     isDiscardingWorkflow,
     discardWorkflowError,
     discardResumableWorkflow,
+    rescoreWithSmartModel,
   } = useDeviceContactScanSession();
+  const previousStatus = useRef(state.status);
+  const previousSmartStatus = useRef(smartMatching.state?.status);
+  const automaticReadOnlyScanStarted = useRef(false);
+  const automaticLocalModelStarted = useRef(false);
+  const automaticDiscardStarted = useRef(false);
+  const automaticResumeStarted = useRef(false);
+  const celebrateNextSuccess = useRef(false);
   const isBusy =
     state.status === 'scanning' ||
     state.status === 'backing-up' ||
@@ -42,9 +71,135 @@ export function DeviceContactScanScreen() {
   const isWeb = Platform.OS === 'web';
   const showIosCertification =
     __DEV__ && Platform.OS === 'ios' && Constants.appOwnership !== AppOwnership.Expo;
+  const suggestionCount = useMemo(() => state.status === 'success'
+    ? createBeautificationChangeSet({
+        snapshot: state.snapshot,
+        duplicateAnalysis: state.analysis,
+        matchAnalysis: state.matchAnalysis,
+        qualityAnalysis: state.quality,
+        createdAt: state.snapshot.createdAt,
+      }).changes.length
+    : 0, [state]);
+  const homePriority = resolveHomePriority({
+    hasRestoreConflict: false,
+    hasInterruptedChange: Boolean(
+      resumableWorkflow && !['reviewing', 'preflighted'].includes(resumableWorkflow.phase),
+    ),
+    hasPreparedApproval: resumableWorkflow?.phase === 'preflighted',
+    hasSavedReview: resumableWorkflow?.phase === 'reviewing',
+    suggestionCount,
+    hasVerifiedBaseline: state.status === 'success',
+  });
+
+  useEffect(() => {
+    if (
+      celebrateNextSuccess.current && state.status === 'success' && previousStatus.current !== 'success'
+      && scanToken !== IOS_SIMULATOR_READ_ONLY_SCAN_TOKEN
+    ) {
+      celebrateNextSuccess.current = false;
+      setShowCelebration(true);
+    }
+    previousStatus.current = state.status;
+  }, [scanToken, state.status]);
+
+  useEffect(() => {
+    if (smartMatching.state?.status === 'ready' && previousSmartStatus.current !== 'ready') {
+      void rescoreWithSmartModel();
+    }
+    previousSmartStatus.current = smartMatching.state?.status;
+  }, [rescoreWithSmartModel, smartMatching.state?.status]);
+
+  useEffect(() => {
+    if (
+      automaticReadOnlyScanStarted.current || !__DEV__ || Platform.OS !== 'ios' || Device.isDevice
+      || Constants.appOwnership === AppOwnership.Expo || scanToken !== IOS_SIMULATOR_READ_ONLY_SCAN_TOKEN
+    ) return;
+    automaticReadOnlyScanStarted.current = true;
+    void scan();
+  }, [scan, scanToken]);
+
+  useEffect(() => {
+    if (
+      automaticLocalModelStarted.current || !__DEV__ || Platform.OS !== 'ios' || Device.isDevice
+      || Constants.appOwnership === AppOwnership.Expo || smartModelToken !== IOS_SIMULATOR_LOCAL_MODEL_TOKEN
+      || smartMatching.state?.status !== 'available'
+    ) return;
+    automaticLocalModelStarted.current = true;
+    void smartMatching.enable();
+  }, [smartMatching, smartModelToken]);
+
+  useEffect(() => {
+    if (
+      automaticDiscardStarted.current || !resumableWorkflow || !__DEV__ || Platform.OS !== 'ios'
+      || Device.isDevice || Constants.appOwnership === AppOwnership.Expo
+      || discardToken !== IOS_SIMULATOR_DISCARD_REVIEW_TOKEN
+    ) return;
+    automaticDiscardStarted.current = true;
+    void discardResumableWorkflow();
+  }, [discardResumableWorkflow, discardToken, resumableWorkflow]);
+
+  useEffect(() => {
+    if (
+      automaticResumeStarted.current || !resumableWorkflow || !__DEV__ || Platform.OS !== 'ios'
+      || Device.isDevice || Constants.appOwnership === AppOwnership.Expo
+      || resumeToken !== IOS_SIMULATOR_RESUME_REVIEW_TOKEN
+    ) return;
+    automaticResumeStarted.current = true;
+    void resume().then((resumed) => {
+      if (resumed) router.push('/review');
+    });
+  }, [resume, resumeToken, resumableWorkflow, router]);
+
+  const modelSize = smartMatching.state?.downloadSizeInBytes;
+  const modelSizeLabel = modelSize
+    ? `${modelSize >= 1024 * 1024 ? (modelSize / (1024 * 1024)).toFixed(1) : Math.ceil(modelSize / 1024)} ${modelSize >= 1024 * 1024 ? 'MB' : 'KB'}`
+    : null;
+
+  const startScan = () => {
+    if (
+      Platform.OS !== 'web' &&
+      smartMatching.state?.consent === 'undecided' &&
+      smartMatching.state.status === 'available'
+    ) {
+      Alert.alert(
+        'Find more likely duplicates',
+        `Catches typos, similar names, and matches that need several clues.${modelSizeLabel ? ` Download: ${modelSizeLabel}.` : ''} Runs only on this device. Your contacts are never uploaded.`,
+        [
+          {
+            text: 'Use basic matching',
+            onPress: () => {
+              celebrateNextSuccess.current = true;
+              void smartMatching.disable();
+              void scan();
+            },
+          },
+          {
+            text: 'Download smart matching',
+            onPress: () => {
+              celebrateNextSuccess.current = true;
+              void smartMatching.enable();
+              void scan();
+            },
+          },
+        ],
+      );
+      return;
+    }
+    celebrateNextSuccess.current = true;
+    void scan();
+  };
 
   return (
     <ThemedView style={styles.screen}>
+      {state.status === 'success' && (
+        <SuccessCelebration
+          visible={showCelebration}
+          count={suggestionCount}
+          scannedCount={state.snapshot.contacts.length}
+          onClose={() => setShowCelebration(false)}
+          onContinue={() => { setShowCelebration(false); router.push('/review'); }}
+        />
+      )}
       <SafeAreaView style={styles.safeArea}>
         <ScrollView
           contentContainerStyle={styles.scrollContent}
@@ -54,29 +209,33 @@ export function DeviceContactScanScreen() {
               <View style={[styles.brandMark, { backgroundColor: theme.primarySoft }]}> 
                 <ThemedText style={[styles.brandLetter, { color: theme.primary }]}>C</ThemedText>
               </View>
-              {!isWeb && (
-                <View style={styles.topActions}>
-                  <Pressable accessibilityRole="button" onPress={() => router.push('/settings' as never)}>
-                    <ThemedText type="smallBold" style={{ color: theme.primary }}>Settings</ThemedText>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Open transaction activity and Undo"
-                    onPress={() => router.push('/activity' as never)}
-                    style={[styles.activityButton, { borderColor: theme.primary }]}>
-                    <ThemedText type="smallBold" style={{ color: theme.primary }}>Activity &amp; Undo</ThemedText>
-                  </Pressable>
-                </View>
-              )}
             </View>
 
             <View style={styles.heading}>
-              <ThemedText style={styles.eyebrow}>CONTACTIFIER</ThemedText>
+              <View style={[styles.eyebrowPill, { backgroundColor: theme.primarySoft }]}>
+                <ThemedText style={[styles.eyebrow, { color: theme.primary }]}>YOUR CONTACT CARE ASSISTANT</ThemedText>
+              </View>
               <ThemedText type="title" style={styles.title}>
-                A cleaner contact list starts here.
+                {homePriority === 'continue-saved-review'
+                  ? 'Continue where you left off.'
+                  : homePriority === 'everything-looks-good'
+                  ? 'Everything looks good.'
+                  : homePriority === 'review-suggestions'
+                    ? 'Your review is ready.'
+                    : resumableWorkflow
+                      ? 'Continue where you left off.'
+                      : 'First, scan your contacts.'}
               </ThemedText>
               <ThemedText themeColor="textSecondary" style={styles.subtitle}>
-                Find duplicate contacts and incomplete details before deciding what to change.
+                {homePriority === 'continue-saved-review'
+                  ? 'Your protected review is ready to resume.'
+                  : homePriority === 'everything-looks-good'
+                  ? 'There is nothing you need to approve right now.'
+                  : homePriority === 'review-suggestions'
+                    ? 'Check the suggestions and approve only what you want.'
+                    : resumableWorkflow
+                      ? 'Your protected cleanup is ready to resume.'
+                      : 'We’ll find duplicates and incomplete details. This first scan is read-only.'}
               </ThemedText>
             </View>
 
@@ -158,35 +317,53 @@ export function DeviceContactScanScreen() {
             )}
 
             {state.status === 'backing-up' && (
-              <ThemedView type="backgroundElement" style={styles.backupProgressCard}>
-                <ActivityIndicator color={theme.primary} />
-                <View style={styles.resultCopy}>
-                  <ThemedText type="smallBold">
-                    {state.phase === 'encrypting' ? 'Encrypting backup' : 'Verifying backup'}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {state.completedContacts} of {state.totalContacts} contacts
-                  </ThemedText>
-                </View>
-              </ThemedView>
+              <TaskProgress
+                title={state.phase === 'encrypting' ? 'Creating your safety backup' : 'Double-checking your backup'}
+                detail={`${state.completedContacts} of ${state.totalContacts} contacts protected`}
+                progress={state.totalContacts > 0 ? state.completedContacts / state.totalContacts : 0}
+              />
             )}
 
-            {state.status === 'success' && (
-              <View style={styles.resultsSection}>
-                <View style={[styles.resultCard, { borderColor: theme.success }]}>
-                  <ThemedText style={[styles.resultCount, { color: theme.success }]}>
-                    {state.snapshot.contacts.length}
-                  </ThemedText>
-                  <View style={styles.resultCopy}>
-                    <ThemedText type="smallBold">Contacts imported</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {state.mode === 'demo'
-                        ? 'Synthetic demo data loaded. Your real contacts were not used.'
-                        : 'Encrypted backup verified. No changes have been made.'}
-                    </ThemedText>
-                  </View>
-                </View>
+            {state.status === 'scanning' && (
+              <TaskProgress title="Looking for easy wins" detail="Finding duplicates and incomplete details on your device…" />
+            )}
 
+            {state.status === 'success' && !resumableWorkflow && (
+              <View style={styles.resultsSection}>
+                <ThemedView type="backgroundElement" style={styles.scanSummaryCard}>
+                  <View style={[styles.scanSummaryMark, { backgroundColor: theme.primarySoft }]}>
+                    <ThemedText style={[styles.scanSummaryMarkText, { color: theme.primary }]}>✓</ThemedText>
+                  </View>
+                  <ThemedText type="subtitle">
+                    {suggestionCount > 0
+                      ? `${suggestionCount} ${suggestionCount === 1 ? 'suggestion' : 'suggestions'} ready to review`
+                      : 'Your contacts look clean'}
+                  </ThemedText>
+                  <ThemedText themeColor="textSecondary" style={styles.scanSummaryCopy}>
+                    {state.mode === 'demo'
+                      ? `${state.snapshot.contacts.length} demo contacts scanned. Your real contacts were not used.`
+                      : `${state.snapshot.contacts.length} contacts scanned and safely backed up. Nothing has been changed.`}
+                  </ThemedText>
+                  {suggestionCount > 0 && (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => router.push('/review')}
+                      style={[styles.reviewButton, { backgroundColor: theme.primary }]}>
+                      <ThemedText style={styles.buttonText}>Review suggestions</ThemedText>
+                    </Pressable>
+                  )}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: showScanDetails }}
+                    onPress={() => setShowScanDetails((visible) => !visible)}
+                    style={styles.detailsButton}>
+                    <ThemedText type="smallBold" style={{ color: theme.primary }}>
+                      {showScanDetails ? 'Hide scan details' : 'View scan details'}
+                    </ThemedText>
+                  </Pressable>
+                </ThemedView>
+
+                {showScanDetails && <>
                 <ThemedView type="backgroundElement" style={styles.analysisCard}>
                   <View style={styles.analysisHeader}>
                     <View>
@@ -239,14 +416,6 @@ export function DeviceContactScanScreen() {
                     </View>
                   )}
 
-                  {state.analysis.matches.length + state.quality.updateCount + state.quality.deleteCandidateCount > 0 && (
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => router.push('/review')}
-                      style={[styles.reviewButton, { backgroundColor: theme.primary }]}>
-                      <ThemedText style={styles.buttonText}>Review suggested changes</ThemedText>
-                    </Pressable>
-                  )}
                 </ThemedView>
 
                 <ThemedView type="backgroundElement" style={styles.analysisCard}>
@@ -323,6 +492,7 @@ export function DeviceContactScanScreen() {
                     </ThemedText>
                   )}
                 </ThemedView>
+                </>}
               </View>
             )}
 
@@ -361,12 +531,12 @@ export function DeviceContactScanScreen() {
               </View>
             )}
 
-            <View style={styles.actionArea}>
+            {state.status !== 'success' && !resumableWorkflow && <View style={styles.actionArea}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Scan device contacts"
                 disabled={isBusy || isWeb}
-                onPress={() => void scan()}
+                onPress={startScan}
                 style={({ pressed }) => [
                   styles.primaryButton,
                   { backgroundColor: theme.primary },
@@ -376,7 +546,7 @@ export function DeviceContactScanScreen() {
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <ThemedText style={styles.buttonText}>
-                    {state.status === 'success' ? 'Scan again' : 'Scan device contacts'}
+                    Scan device contacts
                   </ThemedText>
                 )}
               </Pressable>
@@ -386,35 +556,17 @@ export function DeviceContactScanScreen() {
                   ? 'Device contact scanning is available on iOS and Android.'
                   : 'You choose which suggested changes to apply.'}
               </ThemedText>
-              {!isWeb && (
-                <View style={styles.localDataLinks}>
-                  <Pressable onPress={() => router.push('/activity' as never)} style={styles.backupsButton}>
-                    <ThemedText type="smallBold" style={{ color: theme.primary }}>View activity</ThemedText>
-                  </Pressable>
-                  <Pressable onPress={() => router.push('/backups')} style={styles.backupsButton}>
-                    <ThemedText type="smallBold" style={{ color: theme.primary }}>View verified backups</ThemedText>
-                  </Pressable>
-                </View>
-              )}
+            </View>}
+            {showIosCertification && (
               <Pressable
                 accessibilityRole="button"
-                onPress={loadDemo}
-                style={[styles.demoButton, { borderColor: theme.primary }]}>
-                <ThemedText type="smallBold" style={{ color: theme.primary }}>
-                  Try review flow with demo data
+                onPress={() => router.push('/ios-certification' as never)}
+                style={styles.developerButton}>
+                <ThemedText type="smallBold" themeColor="danger">
+                  Open developer iOS certification harness
                 </ThemedText>
               </Pressable>
-              {showIosCertification && (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => router.push('/ios-certification' as never)}
-                  style={styles.developerButton}>
-                  <ThemedText type="smallBold" themeColor="danger">
-                    Open developer iOS certification harness
-                  </ThemedText>
-                </Pressable>
-              )}
-            </View>
+            )}
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -434,15 +586,6 @@ const styles = StyleSheet.create({
     gap: Spacing.four,
   },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.three },
-  topActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  activityButton: {
-    minHeight: 44,
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: Spacing.three,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   brandMark: {
     width: 56,
     height: 56,
@@ -452,18 +595,18 @@ const styles = StyleSheet.create({
   },
   brandLetter: { fontSize: 30, lineHeight: 36, fontWeight: '800' },
   heading: { gap: Spacing.two },
-  eyebrow: { fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 1.8 },
+  eyebrowPill: { alignSelf: 'flex-start', paddingHorizontal: 11, paddingVertical: 6, borderRadius: 99 },
+  eyebrow: { fontSize: 11, lineHeight: 14, fontWeight: '800', letterSpacing: 1.1 },
   title: { fontSize: 40, lineHeight: 44, maxWidth: 560 },
   subtitle: { fontSize: 18, lineHeight: 27, maxWidth: 600 },
   privacyCard: {
     flexDirection: 'row',
     gap: Spacing.three,
     padding: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: 22,
   },
   privacyDot: { width: 10, height: 10, borderRadius: 5, marginTop: 5 },
   privacyCopy: { flex: 1, gap: Spacing.one },
-  localDataLinks: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: Spacing.three },
   resumeCard: { gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
   resumeButton: {
     minHeight: 48,
@@ -491,6 +634,22 @@ const styles = StyleSheet.create({
   resultCount: { minWidth: 54, fontSize: 32, lineHeight: 38, fontWeight: '800' },
   resultCopy: { flex: 1, gap: Spacing.one },
   resultsSection: { gap: Spacing.three },
+  scanSummaryCard: {
+    alignItems: 'center',
+    gap: Spacing.two,
+    padding: Spacing.four,
+    borderRadius: Spacing.three,
+  },
+  scanSummaryMark: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanSummaryMarkText: { fontSize: 28, lineHeight: 34, fontWeight: '800' },
+  scanSummaryCopy: { textAlign: 'center', maxWidth: 520 },
+  detailsButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   analysisCard: { gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
   analysisHeader: {
     flexDirection: 'row',
@@ -530,7 +689,7 @@ const styles = StyleSheet.create({
   actionArea: { gap: Spacing.two },
   primaryButton: {
     minHeight: 54,
-    borderRadius: 16,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.four,
@@ -538,14 +697,5 @@ const styles = StyleSheet.create({
   buttonMuted: { opacity: 0.58 },
   buttonText: { color: '#FFFFFF', fontSize: 17, lineHeight: 22, fontWeight: '700' },
   actionHint: { textAlign: 'center' },
-  backupsButton: { alignItems: 'center', paddingVertical: Spacing.two },
-  demoButton: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.three,
-  },
   developerButton: { alignItems: 'center', paddingVertical: Spacing.two },
 });

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import * as Device from 'expo-device';
+import Constants, { AppOwnership } from 'expo-constants';
 import { Contact } from 'expo-contacts';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -50,6 +51,7 @@ import {
 } from '@/composition/simulator-contact-write';
 import { useDeviceContactScanSession } from '@/features/contact-import/use-device-contact-scan';
 import { useTheme } from '@/hooks/use-theme';
+import { IOS_SIMULATOR_PREPARE_SINGLE_WRITE_TOKEN } from '@/features/developer/ios-certification-policy';
 
 import { contactReviewValues, createMergePreviewPresentation } from './contact-change-presentation';
 
@@ -60,8 +62,8 @@ const decisions: readonly ReviewDecision[] = [
 ];
 
 function decisionLabel(decision: ChangeDecision): string {
-  if (decision === 'accepted') return 'Accept';
-  if (decision === 'rejected') return 'Reject';
+  if (decision === 'accepted') return 'Approve';
+  if (decision === 'rejected') return 'Ignore';
   if (decision === 'skipped') return 'Later';
   return 'Pending';
 }
@@ -70,6 +72,12 @@ function changeTitle(change: ProposedChange): string {
   if (change.kind === 'merge') return `Merge ${change.before.length} contacts`;
   if (change.kind === 'delete') return `Delete ${change.before.displayName}`;
   return `Update ${change.before.displayName}`;
+}
+
+function confidenceLabel(change: ProposedChange): string {
+  if (change.origin === 'ml') return change.confidence >= 0.85 ? 'Smart match · Strong evidence' : 'Smart match · Review carefully';
+  if (change.kind === 'merge') return 'Exact match';
+  return 'Safe cleanup suggestion';
 }
 
 function completedTransactionTitle(workflow: CleanupWorkflow): string {
@@ -141,7 +149,10 @@ function ChangeCard({
           </View>
           <ThemedText type="subtitle" style={styles.mergeName}>{change.after.displayName}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            {change.reasons.join(' · ')} · {Math.round(change.confidence * 100)}% confidence
+            {confidenceLabel(change)}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {change.reasons.slice(0, 2).join(' · ')}
           </ThemedText>
         </View>
 
@@ -235,7 +246,9 @@ function ChangeCard({
                   );
                   return (
                     <Pressable
-                      accessibilityRole="radio"
+                      accessible
+                      accessibilityLabel={`${conflict.title}: ${option.displayValue}, from ${option.sourceName}`}
+                      accessibilityRole="button"
                       accessibilityState={{ selected }}
                       key={option.sourceContactId}
                       onPress={() => onResolveConflict(conflict.field, option.sourceContactId)}
@@ -325,7 +338,7 @@ function ChangeCard({
         <View style={styles.cardHeading}>
           <ThemedText type="smallBold">{changeTitle(change)}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            {change.reasons.join(' · ')} · {Math.round(change.confidence * 100)}% confidence
+            {confidenceLabel(change)} · {change.reasons.slice(0, 2).join(' · ')}
           </ThemedText>
         </View>
         <ThemedText type="smallBold" style={{ color: theme.primary }}>
@@ -422,29 +435,32 @@ function ExecutionConfirmationSheet({
             <View style={styles.confirmationHeaderSpacer} />
           </View>
           <View style={styles.confirmationContent}>
-            <ThemedText type="title">Ready to update Contacts?</ThemedText>
+            <ThemedText type="title">
+              Apply {confirmation.acceptedTransactionCount} approved {confirmation.acceptedTransactionCount === 1 ? 'change' : 'changes'}?
+            </ThemedText>
             <ThemedText themeColor="textSecondary">
-              Review the exact merged results on the previous screen. Each accepted change will run
-              as an independently verified transaction.
+              Contactifier will update only the suggestions you approved. Everything else stays untouched.
             </ThemedText>
             <ThemedView type="backgroundElement" style={styles.confirmationCard}>
-              {row('Accepted transactions', confirmation.acceptedTransactionCount)}
-              {row('Contacts to create', confirmation.createCount)}
-              {row('Contacts to update', confirmation.updateCount)}
-              {row('Contacts to delete', confirmation.deleteCount, confirmation.hasDestructiveImpact)}
-              {row('Rollback steps prepared', confirmation.rollbackStepCount)}
+              <ThemedText type="smallBold">What will happen</ThemedText>
+              {row('New contacts', confirmation.createCount)}
+              {row('Contacts updated', confirmation.updateCount)}
+              {row('Contacts removed', confirmation.deleteCount, confirmation.hasDestructiveImpact)}
             </ThemedView>
             <ThemedView type="backgroundElement" style={styles.confirmationCard}>
               <ThemedText
                 type="smallBold"
                 themeColor={confirmation.hasVerifiedBackup ? 'success' : 'danger'}>
                 {confirmation.hasVerifiedBackup
-                  ? 'Verified encrypted backup available'
-                  : 'Verified backup unavailable'}
+                  ? 'Protected by a verified backup'
+                  : 'Cannot continue without a verified backup'}
               </ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                Contactifier will reread native results before completion. Failed transactions use
-                their prepared rollback steps without reversing unrelated transactions.
+                Each approved change is checked after it is applied. If a check fails, that change
+                is safely rolled back without affecting the others.
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                You can review and undo completed changes later from Activity &amp; Undo.
               </ThemedText>
             </ThemedView>
           </View>
@@ -460,10 +476,10 @@ function ExecutionConfirmationSheet({
               ]}>
               {isExecuting
                 ? <ActivityIndicator color="#FFFFFF" />
-                : <ThemedText style={styles.applyText}>Confirm and apply</ThemedText>}
+                : <ThemedText style={styles.applyText}>Apply approved changes</ThemedText>}
             </Pressable>
             <ThemedText type="small" themeColor="textSecondary" style={styles.footerNote}>
-              Confirm every time is enabled.
+              Nothing else in your contact list will be changed.
             </ThemedText>
           </View>
         </SafeAreaView>
@@ -480,6 +496,7 @@ function ReadyReview({
   onReview,
   onExecute,
   verifiedBackupId,
+  autoPrepareSingleOwnedFixture,
 }: {
   readonly initialChangeSet: ChangeSet;
   readonly initialPlan?: ContactWritePlan;
@@ -488,10 +505,11 @@ function ReadyReview({
   readonly onReview: (changeSet: ChangeSet) => Promise<void>;
   readonly onExecute?: (plan: ContactWritePlan) => Promise<SimulatorTransactionBatchResult>;
   readonly verifiedBackupId?: string;
+  readonly autoPrepareSingleOwnedFixture?: boolean;
 }) {
   const router = useRouter();
   const theme = useTheme();
-  const { invalidateScan } = useDeviceContactScanSession();
+  const { refreshReturningSession } = useDeviceContactScanSession();
   const [changeSet, setChangeSet] = useState(initialChangeSet);
   const [plan, setPlan] = useState<ContactWritePlan | null>(initialPlan ?? null);
   const [isPreparing, setIsPreparing] = useState(false);
@@ -500,6 +518,7 @@ function ReadyReview({
   const [saveError, setSaveError] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const executionInFlight = useRef(false);
+  const automaticPreparationStarted = useRef(false);
   const [executionResult, setExecutionResult] = useState<SimulatorTransactionBatchResult | null>(null);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [isViewingContact, setIsViewingContact] = useState(false);
@@ -510,21 +529,14 @@ function ReadyReview({
     useState<ContactConfirmationPreferences>(defaultContactConfirmationPreferences);
   const [sessionConfirmedTypes, setSessionConfirmedTypes] =
     useState<ReadonlySet<ContactConfirmationType>>(new Set());
-  const [selectedMergeId, setSelectedMergeId] = useState<string | null>(null);
   const counts = useMemo(() => summarizeChangeDecisions(changeSet), [changeSet]);
-  const visibleChanges = useMemo(
-    () => changeSet.changes.filter(({ decision }) => decision !== 'rejected'),
+  const reviewedCount = counts.accepted + counts.rejected + counts.skipped;
+  const totalCount = reviewedCount + counts.pending;
+  const pendingChanges = useMemo(
+    () => changeSet.changes.filter(({ decision }) => decision === 'pending'),
     [changeSet],
   );
-  const mergeChanges = useMemo(
-    () => visibleChanges.filter((change): change is Extract<ProposedChange, { kind: 'merge' }> => change.kind === 'merge'),
-    [visibleChanges],
-  );
-  const unresolvedMergeCount = mergeChanges.filter((change) => {
-    const resolved = new Set(change.resolvedConflictFields ?? []);
-    return findMergeConflicts(change.before).some(({ field }) => !resolved.has(field));
-  }).length;
-  const selectedMerge = mergeChanges.find(({ id }) => id === selectedMergeId);
+  const currentChange = pendingChanges[0];
   const confirmation = plan
     ? createContactWriteConfirmation({ changeSet, plan, verifiedBackupId })
     : null;
@@ -542,9 +554,7 @@ function ReadyReview({
       .catch(() => undefined);
     return () => { active = false; };
   }, []);
-  const listChanges = selectedMerge
-    ? [selectedMerge]
-    : visibleChanges.filter(({ kind }) => kind !== 'merge');
+  const listChanges = currentChange ? [currentChange] : [];
 
   const decide = async (changeId: string, decision: ReviewDecision) => {
     const next = setChangeDecision(changeSet, changeId, decision);
@@ -552,22 +562,6 @@ function ReadyReview({
     setSaveError(false);
     setPlan(null);
     setPrepareError(false);
-    try {
-      await onReview(next);
-      setChangeSet(next);
-    } catch {
-      setSaveError(true);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const decideAllMerges = async (decision: Extract<ReviewDecision, 'accepted' | 'rejected'>) => {
-    let next = changeSet;
-    for (const change of mergeChanges) next = setChangeDecision(next, change.id, decision);
-    setIsSaving(true);
-    setSaveError(false);
-    setPlan(null);
     try {
       await onReview(next);
       setChangeSet(next);
@@ -643,6 +637,37 @@ function ReadyReview({
     else await execute(prepared);
   };
 
+  useEffect(() => {
+    if (!autoPrepareSingleOwnedFixture || automaticPreparationStarted.current || initialPlan) return;
+    // Preparation is read-only. The independent simulator writer still requires both fixture
+    // ownership markers before it can execute this plan.
+    const target = changeSet.changes.find((change) => change.kind !== 'merge');
+    if (!target) return;
+    automaticPreparationStarted.current = true;
+    let next = changeSet;
+    for (const change of changeSet.changes) {
+      next = setChangeDecision(next, change.id, change.id === target.id ? 'accepted' : 'skipped');
+    }
+    void Promise.resolve().then(async () => {
+      setIsSaving(true);
+      try {
+        await onReview(next);
+        const prepared = await onPrepare(next);
+        setChangeSet(next);
+        setPlan(prepared);
+      } catch {
+        setPrepareError(true);
+      } finally {
+        setIsSaving(false);
+      }
+    });
+  }, [autoPrepareSingleOwnedFixture, changeSet, initialPlan, onPrepare, onReview]);
+
+  const finish = async () => {
+    await refreshReturningSession();
+    router.replace('/');
+  };
+
   if (executionResult) {
     const successful = executionResult.attentionCount === 0;
     const undoableTransactions = [...executionResult.transactions]
@@ -658,7 +683,7 @@ function ReadyReview({
       setViewContactError(false);
       try {
         const changed = await new Contact(resultContactId).editWithForm();
-        if (changed) invalidateScan();
+        if (changed) await refreshReturningSession();
       } catch {
         setViewContactError(true);
       } finally {
@@ -668,7 +693,7 @@ function ReadyReview({
     return (
       <ThemedView style={styles.completionScreen}>
         <SafeAreaView style={styles.completionSafeArea}>
-          <View style={styles.completionContent}>
+          <ScrollView contentContainerStyle={styles.completionContent}>
             <View style={[styles.completionMark, { backgroundColor: successful ? theme.primarySoft : theme.backgroundSelected }]}>
               <ThemedText style={[styles.completionMarkText, { color: successful ? theme.success : theme.danger }]}>
                 {successful ? '✓' : '!'}
@@ -682,8 +707,25 @@ function ReadyReview({
               {executionResult.attentionCount > 0 ? ` · ${executionResult.attentionCount} need review` : ''}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary" style={styles.completionTitle}>
-              Each accepted change has its own encrypted journal. Undo performs a fresh safety check before restoring anything.
+              Everything was checked after saving. You can safely undo a completed change from History.
             </ThemedText>
+            {successful && (
+              <ThemedView type="backgroundElement" style={styles.completionEducationCard}>
+                <ThemedText type="smallBold">You stay in control</ThemedText>
+                <View style={styles.educationRow}>
+                  <ThemedText style={[styles.educationMark, { color: theme.success }]}>✓</ThemedText>
+                  <ThemedText type="small">Only the changes you approved were applied.</ThemedText>
+                </View>
+                <View style={styles.educationRow}>
+                  <ThemedText style={[styles.educationMark, { color: theme.success }]}>✓</ThemedText>
+                  <ThemedText type="small">Each result was read back and verified.</ThemedText>
+                </View>
+                <View style={styles.educationRow}>
+                  <ThemedText style={[styles.educationMark, { color: theme.success }]}>✓</ThemedText>
+                  <ThemedText type="small">History keeps your restore points and Undo actions.</ThemedText>
+                </View>
+              </ThemedView>
+            )}
             {resultContactId && (
               <Pressable
                 accessibilityRole="button"
@@ -707,7 +749,7 @@ function ReadyReview({
                 <ThemedText type="small" themeColor="textSecondary">Verified and journaled</ThemedText>
                 {undoableTransactions.length > 1 && (
                   <ThemedText type="small" themeColor="textSecondary">
-                    {undoableTransactions.length - 1} earlier {undoableTransactions.length === 2 ? 'change is' : 'changes are'} available in Activity.
+                    {undoableTransactions.length - 1} earlier {undoableTransactions.length === 2 ? 'change is' : 'changes are'} available in History.
                   </ThemedText>
                 )}
                 <Pressable
@@ -720,12 +762,12 @@ function ReadyReview({
               </ThemedView>
             )}
             <Pressable accessibilityRole="button" onPress={() => router.push('/activity' as never)} style={styles.mergeTextButton}>
-              <ThemedText type="smallBold" style={{ color: theme.primary }}>View all activity</ThemedText>
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>View History</ThemedText>
             </Pressable>
-            <Pressable accessibilityRole="button" onPress={() => router.replace('/')} style={styles.mergeTextButton}>
-              <ThemedText type="smallBold" style={{ color: theme.primary }}>Scan again</ThemedText>
+            <Pressable accessibilityRole="button" onPress={() => void finish()} style={[styles.applyButton, { backgroundColor: theme.primary }]}>
+              <ThemedText style={styles.applyText}>Done</ThemedText>
             </Pressable>
-          </View>
+          </ScrollView>
         </SafeAreaView>
       </ThemedView>
     );
@@ -740,19 +782,19 @@ function ReadyReview({
         <View style={styles.header}>
           <Pressable
             accessibilityRole="button"
-            onPress={() => selectedMergeId ? setSelectedMergeId(null) : router.back()}
+            onPress={() => router.back()}
             hitSlop={12}>
             <ThemedText type="smallBold" style={{ color: theme.primary }}>
-              {selectedMergeId ? 'Duplicates' : 'Cancel'}
+              Close
             </ThemedText>
           </Pressable>
           <ThemedText type="title" style={styles.title}>
-            {selectedMerge ? 'Merge Contact' : 'Duplicates Found'}
+            {currentChange?.kind === 'merge' ? 'Review possible duplicate' : 'Review suggestion'}
           </ThemedText>
           <ThemedText themeColor="textSecondary">
-            {selectedMerge
-              ? 'Review every value that will remain before choosing Merge.'
-              : 'Review duplicate groups individually or make one explicit bulk decision.'}
+            {counts.pending > 0
+              ? `${reviewedCount + 1} of ${totalCount}. Choose the one action that feels right.`
+              : 'You’re done reviewing. Check the summary, then apply your approved changes.'}
           </ThemedText>
           {isDemo && (
             <View style={[styles.demoNotice, { borderColor: theme.primary }]}>
@@ -764,64 +806,30 @@ function ReadyReview({
               </ThemedText>
             </View>
           )}
-          {!selectedMerge && <ThemedView type="backgroundElement" style={styles.summary}>
-            <ThemedText type="smallBold">{counts.accepted} accepted</ThemedText>
-            <ThemedText type="smallBold">{counts.rejected} rejected</ThemedText>
-            <ThemedText type="smallBold">{counts.skipped} later</ThemedText>
-            <ThemedText type="smallBold" style={{ color: theme.primary }}>
-              {counts.pending} pending
-            </ThemedText>
-          </ThemedView>}
-          {!selectedMerge && mergeChanges.length > 0 && (
-            <>
-              <ThemedView type="backgroundElement" style={styles.duplicateGroup}>
-                {mergeChanges.map((change, index) => (
-                  <Pressable
-                    accessibilityRole="button"
-                    key={change.id}
-                    onPress={() => setSelectedMergeId(change.id)}
-                    style={[styles.duplicateRow, index > 0 && styles.nativeDivider]}>
-                    <View style={styles.sourceCopy}>
-                      <ThemedText type="smallBold">{change.after.displayName || 'Unnamed contact'}</ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {change.before.length} contact cards found
-                      </ThemedText>
-                    </View>
-                    <ThemedText style={styles.chevron}>›</ThemedText>
-                  </Pressable>
-                ))}
-              </ThemedView>
-              <View style={styles.bulkActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={isSaving || unresolvedMergeCount > 0}
-                  onPress={() => void decideAllMerges('accepted')}
-                  style={[styles.mergePrimaryButton, { backgroundColor: theme.primary }, (isSaving || unresolvedMergeCount > 0) && styles.disabled]}>
-                  <ThemedText style={styles.selectedDecisionText}>Merge All</ThemedText>
-                </Pressable>
-                {unresolvedMergeCount > 0 && (
-                  <ThemedText type="small" themeColor="danger" style={styles.footerNote}>
-                    Resolve conflicts in {unresolvedMergeCount} merge{unresolvedMergeCount === 1 ? '' : 's'} before using Merge All.
-                  </ThemedText>
-                )}
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={isSaving}
-                  onPress={() => void decideAllMerges('rejected')}
-                  style={styles.mergeTextButton}>
-                  <ThemedText type="smallBold" style={{ color: theme.primary }}>Ignore All</ThemedText>
-                </Pressable>
-              </View>
-            </>
-          )}
+          <ThemedView type="backgroundElement" style={styles.summary}>
+            <ThemedText type="smallBold">{counts.accepted} approved</ThemedText>
+            <ThemedText type="smallBold">{counts.rejected} ignored</ThemedText>
+            <ThemedText type="smallBold">{counts.skipped} for later</ThemedText>
+            <ThemedText type="smallBold" style={{ color: theme.primary }}>{counts.pending} left</ThemedText>
+          </ThemedView>
         </View>
       }
-      ListEmptyComponent={visibleChanges.length === 0 ? (
+      ListEmptyComponent={counts.pending === 0 ? (
         <ThemedView type="backgroundElement" style={styles.emptyCard}>
-          <ThemedText type="smallBold">No changes need review</ThemedText>
+          <ThemedText type="smallBold">Review complete</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            No pending or later suggestions remain. Rejected unchanged suggestions stay hidden.
+            {counts.accepted > 0
+              ? `${counts.accepted} approved ${counts.accepted === 1 ? 'change is' : 'changes are'} ready for the final safety check.`
+              : 'Nothing was approved. Your contacts will stay exactly as they are.'}
           </ThemedText>
+          {counts.accepted === 0 && (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.replace('/')}
+              style={[styles.mergePrimaryButton, { backgroundColor: theme.primary }]}>
+              <ThemedText style={styles.selectedDecisionText}>Done</ThemedText>
+            </Pressable>
+          )}
         </ThemedView>
       ) : null}
       renderItem={({ item }) => (
@@ -834,13 +842,12 @@ function ReadyReview({
           onDecision={(decision) => {
             if (!isSaving) {
               void decide(item.id, decision);
-              if (item.kind === 'merge') setSelectedMergeId(null);
             }
           }}
         />
       )}
       ListFooterComponent={
-        visibleChanges.length > 0 && !selectedMerge ? (
+        counts.pending === 0 && counts.accepted > 0 ? (
           <View style={styles.footer}>
             {plan && showSafetyDetails && (
               <ThemedView type="backgroundElement" style={styles.planCard}>
@@ -917,7 +924,7 @@ function ReadyReview({
             </Pressable>
             <ThemedText type="small" themeColor="textSecondary" style={styles.footerNote}>
               Contactifier verifies the latest contact state and backup before showing final confirmation.
-              Production and physical-device writes remain disabled.
+              No contact changes until you approve the final confirmation.
             </ThemedText>
             {confirmation && (
               <ExecutionConfirmationSheet
@@ -940,6 +947,10 @@ function ReadyReview({
 
 export function ContactChangeReviewScreen() {
   const router = useRouter();
+  const { certify, prepare: prepareToken } = useLocalSearchParams<{
+    certify?: string | string[];
+    prepare?: string | string[];
+  }>();
   const theme = useTheme();
   const { state, invalidateScan } = useDeviceContactScanSession();
   const generatedChangeSet = useMemo(
@@ -948,6 +959,7 @@ export function ContactChangeReviewScreen() {
         ? createBeautificationChangeSet({
             snapshot: state.snapshot,
             duplicateAnalysis: state.analysis,
+            matchAnalysis: state.matchAnalysis,
             qualityAnalysis: state.quality,
             createdAt: state.snapshot.createdAt,
           })
@@ -970,16 +982,15 @@ export function ContactChangeReviewScreen() {
         const resumable = await manageCleanupWorkflow.listResumable();
         for (const item of resumable) {
           const saved = await manageCleanupWorkflow.load(item.id);
-          if (
-            saved &&
-            (state.status !== 'success' ||
-              (saved.snapshotId === state.snapshot.id && saved.backupId === state.backup.id))
-          ) {
+          if (saved && saved.changeSet.changes.length > 0) {
             if (active) setWorkflow(saved);
             return;
           }
         }
-        if (state.status === 'success' && state.mode === 'device' && generatedChangeSet) {
+        if (
+          state.status === 'success' && state.mode === 'device' && generatedChangeSet
+          && generatedChangeSet.changes.length > 0
+        ) {
           const history: CleanupWorkflow[] = [];
           for (const summary of (await manageCleanupWorkflow.listHistory()).slice(0, 50)) {
             if (!['completed', 'failed', 'rolled-back'].includes(summary.phase)) continue;
@@ -1030,7 +1041,11 @@ export function ContactChangeReviewScreen() {
       backup: state.backup,
       changeSet: reviewedChangeSet,
     });
-    if (workflow) setWorkflow(await manageCleanupWorkflow.preflight(workflow, plan));
+    if (workflow) {
+      const latest = await manageCleanupWorkflow.load(workflow.id);
+      if (!latest) throw new Error('Saved review is unavailable.');
+      setWorkflow(await manageCleanupWorkflow.preflight(latest, plan));
+    }
     return plan;
   };
   const execute = async (plan: ContactWritePlan): Promise<SimulatorTransactionBatchResult> => {
@@ -1045,9 +1060,7 @@ export function ContactChangeReviewScreen() {
           attentionCount: ['completed', 'rolled-back'].includes(transaction.phase) ? 0 : 1,
         })))()
       : executeSimulatorFixtureTransactions(workflow);
-    const settled = await result;
-    invalidateScan();
-    return settled;
+    return result;
   };
   const simulatorExecutionEnabled =
     __DEV__ &&
@@ -1058,6 +1071,11 @@ export function ContactChangeReviewScreen() {
     workflow?.phase === 'preflighted';
   const simulatorRecoveryEnabled =
     __DEV__ && Platform.OS === 'ios' && !Device.isDevice && state.status === 'success' && state.mode === 'device';
+  const autoPrepareSingleOwnedFixture =
+    __DEV__ && Platform.OS === 'ios' && !Device.isDevice &&
+    Constants.appOwnership !== AppOwnership.Expo &&
+    [certify, prepareToken].some((value) =>
+      (Array.isArray(value) ? value[0] : value) === IOS_SIMULATOR_PREPARE_SINGLE_WRITE_TOKEN);
   const recoverInterruptedWrite = async () => {
     if (!workflow || recoveryInFlight.current) return;
     recoveryInFlight.current = true;
@@ -1219,6 +1237,7 @@ export function ContactChangeReviewScreen() {
           </View>
         ) : changeSet ? (
           <ReadyReview
+            key={`${changeSet.id}:${workflow?.id ?? 'generated'}`}
             initialChangeSet={changeSet}
             initialPlan={workflow?.writePlan}
             isDemo={state.status === 'success' && state.mode === 'demo'}
@@ -1226,6 +1245,7 @@ export function ContactChangeReviewScreen() {
             onReview={saveReview}
             onExecute={simulatorExecutionEnabled ? execute : undefined}
             verifiedBackupId={state.status === 'success' ? state.backup.id : undefined}
+            autoPrepareSingleOwnedFixture={autoPrepareSingleOwnedFixture}
           />
         ) : (
           <View style={styles.missingState}>
@@ -1251,7 +1271,7 @@ const styles = StyleSheet.create({
   completionScreen: { flex: 1 },
   completionSafeArea: { flex: 1 },
   completionContent: {
-    flex: 1,
+    flexGrow: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
     alignSelf: 'center',
@@ -1262,6 +1282,9 @@ const styles = StyleSheet.create({
   completionMark: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', alignSelf: 'center' },
   completionMarkText: { fontSize: 42, lineHeight: 48, fontWeight: '700' },
   completionTitle: { textAlign: 'center' },
+  completionEducationCard: { width: '100%', padding: Spacing.three, borderRadius: Spacing.three, gap: Spacing.two },
+  educationRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  educationMark: { fontSize: 18, lineHeight: 22, fontWeight: '800' },
   completionUndoCard: { width: '100%', padding: Spacing.three, borderRadius: Spacing.three, gap: Spacing.two },
   completionUndoButton: { minHeight: 48, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   listContent: {

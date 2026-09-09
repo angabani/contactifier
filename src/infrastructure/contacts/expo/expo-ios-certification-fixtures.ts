@@ -1,4 +1,5 @@
 import { Contact, Group, getPermissionsAsync, type CreateContactRecord } from 'expo-contacts';
+import { File, Paths } from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
@@ -59,6 +60,7 @@ export class ExpoIosCertificationFixtureGateway implements IosFixtureGateway {
   async create(spec: IosFixtureSpec): Promise<string> {
     await assertWritable();
     if (spec.photoKey && !this.fixturePhotoUri) throw new Error('Certification fixture photo is unavailable.');
+    const image = spec.photoKey ? await this.materializeFixturePhoto() : undefined;
     const value: CreateContactRecord = {
       givenName: spec.givenName,
       middleName: spec.middleName,
@@ -85,7 +87,7 @@ export class ExpoIosCertificationFixtureGateway implements IosFixtureGateway {
       ],
       birthday: spec.birthday,
       dates: spec.event ? [{ label: spec.event.label, date: spec.event.date }] : [],
-      image: spec.photoKey ? this.fixturePhotoUri : undefined,
+      image,
     };
     const contact = await Contact.create(value);
     try {
@@ -151,5 +153,14 @@ export class ExpoIosCertificationFixtureGateway implements IosFixtureGateway {
       if ((await group.getName())?.trim() === name.trim()) matches.push(group);
     }
     return matches;
+  }
+
+  private async materializeFixturePhoto(): Promise<string> {
+    if (!this.fixturePhotoUri) throw new Error('Certification fixture photo is unavailable.');
+    if (this.fixturePhotoUri.startsWith('file://')) return this.fixturePhotoUri;
+    const destination = new File(Paths.cache, 'contactifier-certification-avatar.png');
+    return (
+      await File.downloadFileAsync(this.fixturePhotoUri, destination, { idempotent: true })
+    ).uri;
   }
 }

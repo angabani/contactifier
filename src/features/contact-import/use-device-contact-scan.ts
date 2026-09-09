@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 import { Platform } from 'react-native';
@@ -21,8 +22,10 @@ import {
 } from '@/composition/cleanup-workflow';
 import { ContactPermissionDeniedError, type CleanupWorkflowSummary } from '@/application';
 import { readDeviceContacts } from '@/composition/device-contact-scan';
+import { loadSmartContactProbabilityModel } from '@/composition/smart-matching';
 import {
   analyzeExactDuplicates,
+  analyzeContactMatches,
   analyzeContactQuality,
   compareContactSnapshots,
   isSameContactSource,
@@ -31,6 +34,7 @@ import {
   type ContactSnapshotDelta,
   type ContactQualityAnalysis,
   type ExactDuplicateAnalysis,
+  type ContactMatchAnalysis,
 } from '@/domain';
 
 import {
@@ -53,6 +57,7 @@ export type DeviceContactScanState =
       readonly mode: 'device' | 'demo';
       readonly snapshot: ContactSnapshot;
       readonly analysis: ExactDuplicateAnalysis;
+      readonly matchAnalysis?: ContactMatchAnalysis;
       readonly quality: ContactQualityAnalysis;
       readonly delta: ContactSnapshotDelta;
       readonly backup: BackupManifest;
@@ -68,6 +73,7 @@ export function useDeviceContactScan() {
   const [resumeError, setResumeError] = useState(false);
   const [isDiscardingWorkflow, setIsDiscardingWorkflow] = useState(false);
   const [discardWorkflowError, setDiscardWorkflowError] = useState(false);
+  const checkedBaselineOnLaunch = useRef(false);
 
   const refreshResumableWorkflow = useCallback(async () => {
     if (Platform.OS === 'web') return;
@@ -113,14 +119,25 @@ export function useDeviceContactScan() {
             setState({ status: 'backing-up', phase, completedContacts, totalContacts });
           },
         });
+        const focusContactIds = new Set(delta.beautificationContactIds);
+        const focusedSnapshot = {
+          ...snapshot,
+          contacts: snapshot.contacts.filter(({ id }) => focusContactIds.has(id)),
+        };
+        const model = await loadSmartContactProbabilityModel();
+        const [analysis, matchAnalysis] = await Promise.all([
+          Promise.resolve(analyzeExactDuplicates(snapshot, undefined, focusContactIds)),
+          analyzeContactMatches(snapshot, { focusContactIds, model }),
+        ]);
         setState({
           status: 'success',
           mode: 'device',
           snapshot,
           backup,
           delta,
-          analysis: analyzeExactDuplicates(snapshot),
-          quality: analyzeContactQuality(snapshot),
+          analysis,
+          matchAnalysis,
+          quality: analyzeContactQuality(focusedSnapshot),
         });
       } catch {
         setState({ status: 'backup-error' });
@@ -135,9 +152,77 @@ export function useDeviceContactScan() {
     }
   }, []);
 
+  const refreshReturningSession = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    try {
+      const latestBackup = (await listContactBackups.execute()).find(
+        ({ source }) => source.kind === 'device',
+      );
+      if (!latestBackup) return;
+
+      setState({ status: 'scanning' });
+      const snapshot = await readDeviceContacts.execute({ source: { kind: 'device' } });
+      const previousSnapshot = await loadContactBackup.execute(latestBackup);
+      const delta = compareContactSnapshots(previousSnapshot, snapshot);
+      const focusContactIds = new Set(delta.beautificationContactIds);
+      const focusedSnapshot = {
+        ...snapshot,
+        contacts: snapshot.contacts.filter(({ id }) => focusContactIds.has(id)),
+      };
+      const shouldAdvanceBaseline =
+        focusContactIds.size > 0 || delta.deletedContactIds.length > 0;
+      const backup = shouldAdvanceBaseline
+        ? await createContactBackup.execute({
+            snapshot,
+            onProgress: ({ phase, completedContacts, totalContacts }) => {
+              setState({ status: 'backing-up', phase, completedContacts, totalContacts });
+            },
+          })
+        : latestBackup;
+      const model = await loadSmartContactProbabilityModel();
+      const [analysis, matchAnalysis] = await Promise.all([
+        Promise.resolve(analyzeExactDuplicates(snapshot, undefined, focusContactIds)),
+        analyzeContactMatches(snapshot, { focusContactIds, model }),
+      ]);
+      setState({
+        status: 'success',
+        mode: 'device',
+        snapshot,
+        backup,
+        delta,
+        analysis,
+        matchAnalysis,
+        quality: analyzeContactQuality(focusedSnapshot),
+      });
+    } catch (error) {
+      if (error instanceof ContactPermissionDeniedError) {
+        setState({ status: 'permission-denied', canAskAgain: error.canAskAgain });
+        return;
+      }
+      setState({ status: 'error' });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (checkedBaselineOnLaunch.current) return;
+    checkedBaselineOnLaunch.current = true;
+    void refreshReturningSession();
+  }, [refreshReturningSession]);
+
   const invalidateScan = useCallback(() => {
     setState({ status: 'idle' });
   }, []);
+
+  const rescoreWithSmartModel = useCallback(async () => {
+    if (state.status !== 'success') return;
+    const model = await loadSmartContactProbabilityModel();
+    if (!model || state.matchAnalysis?.scoringMode === 'model') return;
+    const focusContactIds = new Set(state.delta.beautificationContactIds);
+    const matchAnalysis = await analyzeContactMatches(state.snapshot, { focusContactIds, model });
+    setState((current) => current.status === 'success' && current.snapshot.id === state.snapshot.id
+      ? { ...current, matchAnalysis }
+      : current);
+  }, [state]);
 
   const loadDemo = useCallback(() => {
     const snapshot = createDemoContactSnapshot();
@@ -204,6 +289,8 @@ export function useDeviceContactScan() {
     discardWorkflowError,
     discardResumableWorkflow,
     refreshResumableWorkflow,
+    rescoreWithSmartModel,
+    refreshReturningSession,
   };
 }
 

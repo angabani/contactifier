@@ -30,6 +30,11 @@ import {
   canManageIosCertificationFixtures,
   IOS_CERTIFICATION_CONFIRMATION,
   IOS_CERTIFICATION_SCENARIOS,
+  IOS_SIMULATOR_RESET_FIXTURES_TOKEN,
+  IOS_SIMULATOR_LOST_WRITE_RESPONSE_TRIAL_TOKEN,
+  IOS_SIMULATOR_LATEST_BACKUP_ALIAS,
+  IOS_SIMULATOR_PERMISSION_DENIAL_TRIAL_TOKEN,
+  IOS_SIMULATOR_ROLLBACK_TRIAL_TOKEN,
   iosCertificationTarget,
   iosCertificationDenialReasons,
 } from './ios-certification-policy';
@@ -37,8 +42,22 @@ import { createIosCertificationReport, type IosCertificationReport } from './ios
 import { isSimulatorFixtureWritePlanOwned } from './simulator-fixture-write-policy';
 
 export function IosCertificationHarnessScreen() {
-  const { seed } = useLocalSearchParams<{ seed?: string }>();
+  const params = useLocalSearchParams<{
+    backup?: string | string[];
+    reset?: string | string[];
+    seed?: string | string[];
+    trial?: string | string[];
+  }>();
+  const first = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
+  const backup = first(params.backup);
+  const reset = first(params.reset);
+  const seed = first(params.seed);
+  const trial = first(params.trial);
   const autoSeedStarted = useRef(false);
+  const autoResetStarted = useRef(false);
+  const autoRollbackStarted = useRef(false);
+  const autoLostWriteResponseStarted = useRef(false);
+  const autoPermissionDenialStarted = useRef(false);
   const theme = useTheme();
   const [fullContactAccess, setFullContactAccess] = useState(false);
   const [confirmation, setConfirmation] = useState('');
@@ -88,6 +107,7 @@ export function IosCertificationHarnessScreen() {
     verifiedBackupIds,
   });
   const fixturesEnabled = canManageIosCertificationFixtures({ environment, confirmation });
+  const simulatorMutationTrialsEnabled = armed && target === 'simulator';
   const permissionTrialEnabled = __DEV__ && Platform.OS === 'ios' && !Device.isDevice &&
     Constants.appOwnership !== AppOwnership.Expo && !fullContactAccess &&
     confirmation === IOS_CERTIFICATION_CONFIRMATION && verifiedBackupIds.includes(backupId);
@@ -123,6 +143,36 @@ export function IosCertificationHarnessScreen() {
       setFixtureBusy(false);
     }
   };
+
+  useEffect(() => {
+    const backupAvailable = backup === IOS_SIMULATOR_LATEST_BACKUP_ALIAS
+      ? verifiedBackupIds.length > 0
+      : Boolean(backup && verifiedBackupIds.includes(backup));
+    if (
+      autoPermissionDenialStarted.current || trial !== IOS_SIMULATOR_PERMISSION_DENIAL_TRIAL_TOKEN
+      || !backup || !backupAvailable || !__DEV__ || Platform.OS !== 'ios' || Device.isDevice
+      || Constants.appOwnership === AppOwnership.Expo || fullContactAccess
+    ) return;
+    autoPermissionDenialStarted.current = true;
+    setFixtureBusy(true);
+    void (async () => {
+      const candidates: CleanupWorkflow[] = [];
+      for (const summary of await manageCleanupWorkflow.listHistory()) {
+        const workflow = await manageCleanupWorkflow.load(summary.id);
+        if (
+          (backup === IOS_SIMULATOR_LATEST_BACKUP_ALIAS || workflow?.backupId === backup)
+          && workflow?.phase === 'preflighted' && workflow.writePlan
+          && isSimulatorFixtureWritePlanOwned(workflow.writePlan)
+        ) candidates.push(workflow);
+      }
+      const workflow = candidates.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      if (!workflow) throw new Error('Prepare an owned fixture transaction before revoking access.');
+      const evidence = await certifySimulatorPermissionDenial(workflow);
+      setPermissionMessage(`Verified ${evidence.workflowId}: revision ${evidence.revisionAfter} and ${evidence.journalEntriesAfter} journal entries remained unchanged.`);
+    })().catch((error: unknown) => {
+      setPermissionMessage(error instanceof Error ? error.message : 'Permission-denial trial failed.');
+    }).finally(() => setFixtureBusy(false));
+  }, [backup, fullContactAccess, trial, verifiedBackupIds]);
 
   const runPhotoTrial = async () => {
     setFixtureBusy(true);
@@ -179,6 +229,37 @@ export function IosCertificationHarnessScreen() {
     }
   };
 
+  useEffect(() => {
+    const backupAvailable = backup === IOS_SIMULATOR_LATEST_BACKUP_ALIAS
+      ? verifiedBackupIds.length > 0
+      : Boolean(backup && verifiedBackupIds.includes(backup));
+    if (
+      autoRollbackStarted.current || trial !== IOS_SIMULATOR_ROLLBACK_TRIAL_TOKEN || !backup
+      || !backupAvailable || !__DEV__ || Platform.OS !== 'ios' || Device.isDevice
+      || Constants.appOwnership === AppOwnership.Expo || !fullContactAccess
+    ) return;
+    autoRollbackStarted.current = true;
+    setFixtureBusy(true);
+    void (async () => {
+      const candidates: CleanupWorkflow[] = [];
+      for (const summary of await manageCleanupWorkflow.listHistory()) {
+        const workflow = await manageCleanupWorkflow.load(summary.id);
+        if (
+          (backup === IOS_SIMULATOR_LATEST_BACKUP_ALIAS || workflow?.backupId === backup)
+          && workflow?.phase === 'preflighted'
+          && workflow.writePlan?.operations.length === 1
+          && isSimulatorFixtureWritePlanOwned(workflow.writePlan)
+        ) candidates.push(workflow);
+      }
+      const workflow = candidates.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      if (!workflow) throw new Error('No owned single-operation preflight exists for this backup.');
+      const result = await executeSimulatorVerificationFailureTrial(workflow);
+      setRollbackMessage(`Workflow ${result.id} was compensated and verified as rolled back after forced verification failure.`);
+    })().catch((error: unknown) => {
+      setRollbackMessage(error instanceof Error ? error.message : 'Rollback trial failed.');
+    }).finally(() => setFixtureBusy(false));
+  }, [backup, fullContactAccess, trial, verifiedBackupIds]);
+
   const runInterruptionTrial = async () => {
     setFixtureBusy(true);
     try {
@@ -201,6 +282,37 @@ export function IosCertificationHarnessScreen() {
       setFixtureBusy(false);
     }
   };
+
+  useEffect(() => {
+    const backupAvailable = backup === IOS_SIMULATOR_LATEST_BACKUP_ALIAS
+      ? verifiedBackupIds.length > 0
+      : Boolean(backup && verifiedBackupIds.includes(backup));
+    if (
+      autoLostWriteResponseStarted.current || trial !== IOS_SIMULATOR_LOST_WRITE_RESPONSE_TRIAL_TOKEN
+      || !backup || !backupAvailable || !__DEV__ || Platform.OS !== 'ios'
+      || Device.isDevice || Constants.appOwnership === AppOwnership.Expo || !fullContactAccess
+    ) return;
+    autoLostWriteResponseStarted.current = true;
+    setFixtureBusy(true);
+    void (async () => {
+      const candidates: CleanupWorkflow[] = [];
+      for (const summary of await manageCleanupWorkflow.listHistory()) {
+        const workflow = await manageCleanupWorkflow.load(summary.id);
+        if (
+          (backup === IOS_SIMULATOR_LATEST_BACKUP_ALIAS || workflow?.backupId === backup)
+          && workflow?.phase === 'preflighted'
+          && workflow.writePlan?.operations.length === 1
+          && isSimulatorFixtureWritePlanOwned(workflow.writePlan)
+        ) candidates.push(workflow);
+      }
+      const workflow = candidates.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      if (!workflow) throw new Error('No owned single-operation preflight exists for this backup.');
+      const result = await executeSimulatorLostWriteResponseTrial(workflow);
+      setInterruptionMessage(`Workflow ${result.id} reconciled the applied native write without retry and completed compensation.`);
+    })().catch((error: unknown) => {
+      setInterruptionMessage(error instanceof Error ? error.message : 'Write-interruption trial failed.');
+    }).finally(() => setFixtureBusy(false));
+  }, [backup, fullContactAccess, trial, verifiedBackupIds]);
 
   const runFinalizationTrial = async () => {
     setFixtureBusy(true);
@@ -240,6 +352,27 @@ export function IosCertificationHarnessScreen() {
     }).finally(() => setFixtureBusy(false));
   }, [environment, seed]);
 
+  useEffect(() => {
+    if (
+      autoResetStarted.current || reset !== IOS_SIMULATOR_RESET_FIXTURES_TOKEN || !__DEV__
+      || Platform.OS !== 'ios' || Device.isDevice || Constants.appOwnership === AppOwnership.Expo
+      || !fullContactAccess
+    ) return;
+    autoResetStarted.current = true;
+    setFixtureBusy(true);
+    setFixtureMessage('Rotating marker-owned simulator fixtures…');
+    void iosCertificationFixtures.cleanup()
+      .then((cleaned) => {
+        if (cleaned.retained > 0) throw new Error(`Rotation stopped: ${cleaned.retained} fixtures could not prove ownership.`);
+        return iosCertificationFixtures.setup();
+      })
+      .then((result) => setFixtureMessage(result.outcome === 'ready'
+        ? `Simulator fixtures rotated safely: ${result.fixtureSet.fixtures.length} contacts ready.`
+        : `Simulator fixture rotation stopped safely: ${result.outcome}.`))
+      .catch((error: unknown) => setFixtureMessage(error instanceof Error ? error.message : 'Fixture rotation failed safely.'))
+      .finally(() => setFixtureBusy(false));
+  }, [fullContactAccess, reset]);
+
   const setupFixtures = async () => {
     setFixtureBusy(true);
     try {
@@ -247,7 +380,7 @@ export function IosCertificationHarnessScreen() {
       setFixtureMessage(
         result.outcome === 'ready'
           ? `Fixture set ${result.fixtureSet.id} is ready. Scan contacts now and create a verified backup before testing.`
-          : `Fixture setup stopped safely: ${result.outcome}. Press setup again only for retry-required; ambiguous fixtures require inspection.`,
+          : `Fixture setup stopped safely: ${result.outcome}${result.failureReason ? ` (${result.failureReason})` : ''}. Press setup again only for retry-required; ambiguous fixtures require inspection.`,
       );
     } catch (error) {
       setFixtureMessage(error instanceof Error ? error.message : 'Fixture setup failed.');
@@ -306,6 +439,19 @@ export function IosCertificationHarnessScreen() {
             Use only contacts created specifically for destructive testing.
           </ThemedText>
 
+          <ThemedView type="backgroundElement" style={styles.card}>
+            <ThemedText type="smallBold">Safe test order</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">1. Finish all mutation and recovery trials in the Simulator.</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">2. On iPhone, test permission, scanning, backup, model download, and suggestions without approving changes.</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">3. Create only visibly prefixed disposable fixtures after selecting their verified backup.</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">4. Do not test against ordinary contacts. Physical-device mutation stays locked in this build.</ThemedText>
+            <ThemedText type="smallBold" themeColor={target === 'physical-device' ? 'success' : 'textSecondary'}>
+              {target === 'physical-device'
+                ? 'SAFE IPHONE MODE — native mutation trials are disabled'
+                : 'SIMULATOR MODE — only marker-owned fixtures can be mutated'}
+            </ThemedText>
+          </ThemedView>
+
           {denialReasons.length > 0 && (
             <ThemedView type="backgroundElement" style={styles.card}>
               <ThemedText type="smallBold">Harness locked</ThemedText>
@@ -352,8 +498,8 @@ export function IosCertificationHarnessScreen() {
               Reads the exact native contact from its durable create receipt and compares its photo SHA-256 with the authenticated backup asset. No contact is modified.
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">{photoMessage}</ThemedText>
-            <Pressable accessibilityRole="button" disabled={!armed || fixtureBusy} onPress={() => void runPhotoTrial()}
-              style={[styles.actionButton, { backgroundColor: theme.primary }, (!armed || fixtureBusy) && styles.disabled]}>
+            <Pressable accessibilityRole="button" disabled={!simulatorMutationTrialsEnabled || fixtureBusy} onPress={() => void runPhotoTrial()}
+              style={[styles.actionButton, { backgroundColor: theme.primary }, (!simulatorMutationTrialsEnabled || fixtureBusy) && styles.disabled]}>
               <ThemedText type="smallBold" style={styles.actionButtonText}>Verify restored photo bytes</ThemedText>
             </Pressable>
           </ThemedView>
@@ -363,8 +509,8 @@ export function IosCertificationHarnessScreen() {
               Applies exactly one owned simulator fixture change, forces post-write verification to fail, and requires reverse compensation to finish before reporting success.
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">{rollbackMessage}</ThemedText>
-            <Pressable accessibilityRole="button" disabled={!armed || fixtureBusy} onPress={() => void runRollbackTrial()}
-              style={[styles.actionButton, { backgroundColor: theme.primary }, (!armed || fixtureBusy) && styles.disabled]}>
+            <Pressable accessibilityRole="button" disabled={!simulatorMutationTrialsEnabled || fixtureBusy} onPress={() => void runRollbackTrial()}
+              style={[styles.actionButton, { backgroundColor: theme.primary }, (!simulatorMutationTrialsEnabled || fixtureBusy) && styles.disabled]}>
               <ThemedText type="smallBold" style={styles.actionButtonText}>Run compensated rollback trial</ThemedText>
             </Pressable>
           </ThemedView>
@@ -374,8 +520,8 @@ export function IosCertificationHarnessScreen() {
               Applies exactly one owned simulator fixture mutation, discards its response, then rereads native state to reconcile and compensate without retrying the mutation.
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">{interruptionMessage}</ThemedText>
-            <Pressable accessibilityRole="button" disabled={!armed || fixtureBusy} onPress={() => void runInterruptionTrial()}
-              style={[styles.actionButton, { backgroundColor: theme.primary }, (!armed || fixtureBusy) && styles.disabled]}>
+            <Pressable accessibilityRole="button" disabled={!simulatorMutationTrialsEnabled || fixtureBusy} onPress={() => void runInterruptionTrial()}
+              style={[styles.actionButton, { backgroundColor: theme.primary }, (!simulatorMutationTrialsEnabled || fixtureBusy) && styles.disabled]}>
               <ThemedText type="smallBold" style={styles.actionButtonText}>Run lost-response recovery trial</ThemedText>
             </Pressable>
           </ThemedView>
@@ -385,8 +531,8 @@ export function IosCertificationHarnessScreen() {
               Recreates one owned fixture, removes its reconciliation marker, discards that response, then resumes idempotently under a fresh authorization.
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">{finalizationMessage}</ThemedText>
-            <Pressable accessibilityRole="button" disabled={!armed || fixtureBusy} onPress={() => void runFinalizationTrial()}
-              style={[styles.actionButton, { backgroundColor: theme.primary }, (!armed || fixtureBusy) && styles.disabled]}>
+            <Pressable accessibilityRole="button" disabled={!simulatorMutationTrialsEnabled || fixtureBusy} onPress={() => void runFinalizationTrial()}
+              style={[styles.actionButton, { backgroundColor: theme.primary }, (!simulatorMutationTrialsEnabled || fixtureBusy) && styles.disabled]}>
               <ThemedText type="smallBold" style={styles.actionButtonText}>Run finalization recovery trial</ThemedText>
             </Pressable>
           </ThemedView>

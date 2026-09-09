@@ -34,6 +34,17 @@ export {
   type ContactConfirmationPreferences,
   type ContactConfirmationType,
 } from './ports/contact-confirmation-preference-repository';
+export type {
+  SmartMatchingConsent,
+  SmartMatchingPreferenceRepository,
+  SmartMatchingState,
+  SmartModelArtifact,
+  SmartModelCatalog,
+  SmartModelFormat,
+  SmartModelArtifactStore,
+  SmartModelStatus,
+} from './ports/smart-matching';
+export { ManageSmartMatching } from './use-cases/manage-smart-matching';
 export {
   CreateContactBackup,
   type CreateContactBackupRequest,
@@ -56,6 +67,7 @@ export {
 } from './use-cases/prepare-contact-transaction-undo';
 export {
   createExactDuplicateChangeSet,
+  mergeContactsForProposal,
   type CreateExactDuplicateChangeSetInput,
 } from './use-cases/create-exact-duplicate-change-set';
 export {

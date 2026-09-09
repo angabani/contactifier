@@ -46,6 +46,7 @@ describe('IosCertificationFixtureManager', () => {
     const result = await manager(repository, native).setup();
 
     expect(result.outcome).toBe('create-unknown');
+    expect(result.failureReason).toBe('unknown native result');
     expect(repository.value?.fixtures[0].status).toBe('create-unknown');
   });
 
@@ -120,8 +121,8 @@ describe('IosCertificationFixtureManager', () => {
   it('defines a versioned dataset covering positive, negative, conflict, and rich cases', () => {
     const fixtures = iosFixtureSpecs('matrix');
 
-    expect(IOS_FIXTURE_DATASET_VERSION).toBe(5);
-    expect(fixtures).toHaveLength(17);
+    expect(IOS_FIXTURE_DATASET_VERSION).toBe(6);
+    expect(fixtures).toHaveLength(18);
     expect(new Set(fixtures.map(({ key }) => key)).size).toBe(fixtures.length);
     expect(new Set(fixtures.map(({ scenario }) => scenario))).toEqual(new Set([
       'Exact normalized phone',
@@ -130,6 +131,7 @@ describe('IosCertificationFixtureManager', () => {
       'Non-transitive merge guard',
       'Conflicting identity',
       'Incomplete contact',
+      'Single-operation cleanup',
       'Unique negative control',
       'Rich multi-value merge',
       'Photo merge and restore',

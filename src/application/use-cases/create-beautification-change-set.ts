@@ -4,17 +4,19 @@ import {
   createConfidenceScore,
   type ChangeSet,
   type ContactQualityAnalysis,
+  type ContactMatchAnalysis,
   type ContactSnapshot,
   type ExactDuplicateAnalysis,
   type ProposedChange,
 } from '@/domain';
 
-import { createExactDuplicateChangeSet } from './create-exact-duplicate-change-set';
+import { createExactDuplicateChangeSet, mergeContactsForProposal } from './create-exact-duplicate-change-set';
 
 export interface CreateBeautificationChangeSetInput {
   readonly snapshot: ContactSnapshot;
   readonly duplicateAnalysis: ExactDuplicateAnalysis;
   readonly qualityAnalysis: ContactQualityAnalysis;
+  readonly matchAnalysis?: ContactMatchAnalysis;
   readonly createdAt: string;
 }
 
@@ -30,6 +32,7 @@ export function createBeautificationChangeSet({
   snapshot,
   duplicateAnalysis,
   qualityAnalysis,
+  matchAnalysis,
   createdAt,
 }: CreateBeautificationChangeSetInput): ChangeSet {
   const duplicateChanges = createExactDuplicateChangeSet({
@@ -42,6 +45,27 @@ export function createBeautificationChangeSet({
       change.kind === 'merge' ? change.contactIds : [],
     ),
   );
+  const similarityMergeChanges: ProposedChange[] = [];
+  for (const candidate of matchAnalysis?.candidates ?? []) {
+    if (candidate.band === 'not-suggested' || candidate.contactIds.some((id) => mergeContactIds.has(id))) continue;
+    const before = candidate.contactIds.map((id) => snapshot.contacts.find((contact) => contact.id === id));
+    if (before.some((contact) => !contact)) continue;
+    const contacts = before as [NonNullable<(typeof before)[number]>, NonNullable<(typeof before)[number]>];
+    similarityMergeChanges.push({
+      id: `match:${candidate.contactIds.join(':')}`,
+      kind: 'merge',
+      origin: candidate.scoringMode === 'model' ? 'ml' : 'rule',
+      confidence: createConfidenceScore(candidate.probability),
+      reasons: candidate.matrix.features
+        .filter(({ score, isConflict }) => isConflict || (score !== null && score >= 0.7))
+        .map(({ explanation }) => explanation),
+      decision: 'pending',
+      contactIds: candidate.contactIds,
+      before: contacts,
+      after: mergeContactsForProposal(contacts),
+    });
+    candidate.contactIds.forEach((id) => mergeContactIds.add(id));
+  }
   const mergeChanges = duplicateChanges.changes.map((change): ProposedChange => {
     if (change.kind !== 'merge') return change;
     const mergedQuality = analyzeContactQuality({ ...snapshot, contacts: [change.after] });
@@ -88,6 +112,6 @@ export function createBeautificationChangeSet({
     id: `beautification:${snapshot.id}`,
     snapshotId: snapshot.id,
     createdAt,
-    changes: [...mergeChanges, ...qualityChanges],
+    changes: [...mergeChanges, ...similarityMergeChanges, ...qualityChanges],
   });
 }

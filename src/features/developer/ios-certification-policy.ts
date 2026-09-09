@@ -1,5 +1,15 @@
 export const IOS_CERTIFICATION_CONFIRMATION = 'CONTACTIFIER DISPOSABLE CONTACTS ONLY';
 export const IOS_SIMULATOR_SEED_TOKEN = 'contactifier-dataset-v2';
+export const IOS_SIMULATOR_READ_ONLY_SCAN_TOKEN = 'contactifier-read-only-scan-v1';
+export const IOS_SIMULATOR_LOCAL_MODEL_TOKEN = 'contactifier-local-model-v1';
+export const IOS_SIMULATOR_DISCARD_REVIEW_TOKEN = 'contactifier-discard-review-v1';
+export const IOS_SIMULATOR_PREPARE_SINGLE_WRITE_TOKEN = 'contactifier-prepare-owned-single-write-v1';
+export const IOS_SIMULATOR_RESET_FIXTURES_TOKEN = 'contactifier-reset-owned-fixtures-v1';
+export const IOS_SIMULATOR_RESUME_REVIEW_TOKEN = 'contactifier-resume-review-v1';
+export const IOS_SIMULATOR_ROLLBACK_TRIAL_TOKEN = 'contactifier-run-owned-rollback-v1';
+export const IOS_SIMULATOR_LOST_WRITE_RESPONSE_TRIAL_TOKEN = 'contactifier-run-owned-lost-write-response-v1';
+export const IOS_SIMULATOR_LATEST_BACKUP_ALIAS = 'latest';
+export const IOS_SIMULATOR_PERMISSION_DENIAL_TRIAL_TOKEN = 'contactifier-run-permission-denial-v1';
 
 export type IosCertificationDenialReason =
   | 'development-build-required'

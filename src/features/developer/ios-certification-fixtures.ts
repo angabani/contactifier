@@ -1,6 +1,6 @@
 export const IOS_FIXTURE_NAME_PREFIX = '[Contactifier Test]';
 export const IOS_FIXTURE_MARKER_PREFIX = 'contactifier://certification-fixture/';
-export const IOS_FIXTURE_DATASET_VERSION = 5;
+export const IOS_FIXTURE_DATASET_VERSION = 6;
 
 export type IosFixtureStatus = 'pending-create' | 'create-unknown' | 'created' | 'absent' | 'ambiguous';
 
@@ -78,6 +78,7 @@ export type IosFixtureSetupOutcome = 'ready' | 'retry-required' | 'ambiguous' | 
 export interface IosFixtureSetupResult {
   readonly outcome: IosFixtureSetupOutcome;
   readonly fixtureSet: IosFixtureSet;
+  readonly failureReason?: string;
 }
 
 export function iosFixtureSpecs(id: string): readonly IosFixtureSpec[] {
@@ -98,6 +99,7 @@ export function iosFixtureSpecs(id: string): readonly IosFixtureSpec[] {
     spec({ key: 'conflict-a', scenario: 'Conflicting identity', givenName: name('Jordan'), familyName: 'Conflict A', phones: [{ label: 'mobile', value: '646-555-0300' }], emails: [] }),
     spec({ key: 'conflict-b', scenario: 'Conflicting identity', givenName: name('Taylor'), familyName: 'Conflict B', phones: [{ label: 'mobile', value: '(646) 555-0300' }], emails: [] }),
     spec({ key: 'incomplete', scenario: 'Incomplete contact', givenName: name('Incomplete'), familyName: '', phones: [], emails: [] }),
+    spec({ key: 'cleanup-update', scenario: 'Single-operation cleanup', givenName: name('Cleanup'), familyName: 'Update', phones: [{ label: 'mobile', value: '+1 202 555 0450' }, { label: 'work', value: '+1 (202) 555-0450' }], emails: [] }),
     spec({ key: 'unique', scenario: 'Unique negative control', givenName: name('Unique'), familyName: 'Control', phones: [{ label: 'mobile', value: '+1 202 555 0400' }], emails: [{ label: 'home', value: 'unique.fixture@example.test' }] }),
     spec({ key: 'rich-a', scenario: 'Rich multi-value merge', givenName: name('Riley'), middleName: 'Certification', familyName: 'Rich A', prefix: 'Dr.', suffix: 'III', phoneticGivenName: 'Rye-lee', phones: [{ label: 'mobile', value: '+1 303 555 0500' }, { label: 'work', value: '+1 303 555 0501' }], emails: [{ label: 'home', value: 'riley.fixture@example.test' }], company: 'Contactifier Labs', department: 'Certification', jobTitle: 'Test Contact', groups: [richGroup], address: { label: 'work', street: '100 Test Lane', city: 'Denver', region: 'CO', postalCode: '80202', country: 'US' }, website: { label: 'homepage', value: 'https://contactifier.example.test/riley' }, birthday: { year: 1988, month: 4, day: 12 }, event: { label: 'anniversary', date: { year: 2020, month: 9, day: 21 } } }),
     spec({ key: 'rich-b', scenario: 'Rich multi-value merge', givenName: name('Riley'), familyName: 'Rich B', phones: [{ label: 'mobile', value: '+1 (303) 555-0500' }], emails: [{ label: 'work', value: 'riley.work@example.test' }], company: 'Contactifier Labs' }),
@@ -160,10 +162,14 @@ export class IosCertificationFixtureManager {
         const nativeContactId = await this.gateway.create(fixture);
         set = replaceFixture(set, fixture.key, { ...fixture, status: 'created', nativeContactId });
         await this.repository.save(set);
-      } catch {
+      } catch (error) {
         set = replaceFixture(set, fixture.key, { ...fixture, status: 'create-unknown' });
         await this.repository.save(set);
-        return { outcome: 'create-unknown', fixtureSet: set };
+        return {
+          outcome: 'create-unknown',
+          fixtureSet: set,
+          failureReason: error instanceof Error ? error.message : 'Unknown native fixture error.',
+        };
       }
     }
     return { outcome: 'ready', fixtureSet: set };
