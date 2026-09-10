@@ -21,6 +21,7 @@ import {
   executeSimulatorVerificationFailureTrial,
   executeSimulatorLostWriteResponseTrial,
   executeSimulatorLostFinalizationResponseTrial,
+  executeSimulatorCompletionSuite,
 } from '@/composition/simulator-contact-write';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -35,6 +36,8 @@ import {
   IOS_SIMULATOR_LATEST_BACKUP_ALIAS,
   IOS_SIMULATOR_PERMISSION_DENIAL_TRIAL_TOKEN,
   IOS_SIMULATOR_ROLLBACK_TRIAL_TOKEN,
+  IOS_SIMULATOR_COMPLETION_SUITE_TOKEN,
+  IOS_SIMULATOR_REPORT_TOKEN,
   iosCertificationTarget,
   iosCertificationDenialReasons,
 } from './ios-certification-policy';
@@ -58,6 +61,8 @@ export function IosCertificationHarnessScreen() {
   const autoRollbackStarted = useRef(false);
   const autoLostWriteResponseStarted = useRef(false);
   const autoPermissionDenialStarted = useRef(false);
+  const autoCompletionSuiteStarted = useRef(false);
+  const autoReportStarted = useRef(false);
   const theme = useTheme();
   const [fullContactAccess, setFullContactAccess] = useState(false);
   const [confirmation, setConfirmation] = useState('');
@@ -71,6 +76,27 @@ export function IosCertificationHarnessScreen() {
   const [rollbackMessage, setRollbackMessage] = useState('No forced rollback trial recorded.');
   const [interruptionMessage, setInterruptionMessage] = useState('No lost-response trial recorded.');
   const [finalizationMessage, setFinalizationMessage] = useState('No finalization-recovery trial recorded.');
+
+  useEffect(() => {
+    if (
+      autoCompletionSuiteStarted.current || trial !== IOS_SIMULATOR_COMPLETION_SUITE_TOKEN ||
+      !__DEV__ || Platform.OS !== 'ios' || Device.isDevice ||
+      Constants.appOwnership === AppOwnership.Expo || !fullContactAccess
+    ) return;
+    autoCompletionSuiteStarted.current = true;
+    setFixtureBusy(true);
+    setFinalizationMessage('Running owned mutation, journaled Undo, finalization recovery, and photo verification…');
+    void executeSimulatorCompletionSuite().then((result) => {
+      setBackupId(result.backupId);
+      setVerifiedBackupIds((current) => current.includes(result.backupId)
+        ? current : [result.backupId, ...current]);
+      setFinalizationMessage(`Completed mutation ${result.mutation.id}, journaled Undo ${result.undo.id}, rich merge ${result.merge.id}, and ${result.restoration.completedCount} restore transaction(s); marker recovery passed.`);
+      setPhotoMessage(`Verified restored native photo SHA-256: ${result.photoSha256}.`);
+      setPermissionMessage(`Owned preflight ${result.permissionPreflight.id} is ready for the non-writing permission-denial trial.`);
+    }).catch((error: unknown) => {
+      setFinalizationMessage(error instanceof Error ? error.message : 'Completion suite failed safely.');
+    }).finally(() => setFixtureBusy(false));
+  }, [fullContactAccess, trial]);
 
   useEffect(() => {
     if (
@@ -410,6 +436,16 @@ export function IosCertificationHarnessScreen() {
         const workflow = await manageCleanupWorkflow.load(summary.id);
         if (workflow) workflows.push(workflow);
       }
+      const failedRestore = workflows.find(({ phase, changeSet }) =>
+        phase === 'rolled-back' && changeSet.id.includes(':restore:'));
+      if (failedRestore) {
+        const operations = failedRestore.writePlan?.operations.map((operation) => {
+          const contact = operation.kind === 'create' ? operation.contact
+            : operation.kind === 'update' ? operation.after : operation.before;
+          return `${operation.kind}:${contact.displayName || contact.id}`;
+        }).join(', ');
+        setFinalizationMessage(`Latest rolled-back restore diagnostic: ${operations ?? 'no operations'} (${failedRestore.rollbackCause ?? 'unknown cause'}).`);
+      }
       setReport(createIosCertificationReport({
         generatedAt: new Date().toISOString(),
         selectedVerifiedBackupId: verifiedBackupIds.includes(backupId) ? backupId : undefined,
@@ -422,6 +458,36 @@ export function IosCertificationHarnessScreen() {
       setFixtureBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (
+      autoReportStarted.current || trial !== IOS_SIMULATOR_REPORT_TOKEN ||
+      !__DEV__ || Platform.OS !== 'ios' || Device.isDevice ||
+      Constants.appOwnership === AppOwnership.Expo || verifiedBackupIds.length === 0
+    ) return;
+    autoReportStarted.current = true;
+    const selectedBackupId = backup === IOS_SIMULATOR_LATEST_BACKUP_ALIAS
+      ? verifiedBackupIds[0]
+      : backup && verifiedBackupIds.includes(backup) ? backup : verifiedBackupIds[0];
+    setBackupId(selectedBackupId);
+    setFixtureBusy(true);
+    void (async () => {
+      const fixtureSet = await iosCertificationFixtures.load();
+      const workflows: CleanupWorkflow[] = [];
+      for (const summary of await manageCleanupWorkflow.listHistory()) {
+        const workflow = await manageCleanupWorkflow.load(summary.id);
+        if (workflow) workflows.push(workflow);
+      }
+      setReport(createIosCertificationReport({
+        generatedAt: new Date().toISOString(),
+        selectedVerifiedBackupId: selectedBackupId,
+        fixtureSetReady: Boolean(fixtureSet?.fixtures.every(({ status }) => status === 'created')),
+        workflows,
+        permissionEvidence: await iosCertificationEvidence.load(),
+        photoEvidence: await iosCertificationPhotoEvidence.load(),
+      }));
+    })().finally(() => setFixtureBusy(false));
+  }, [backup, trial, verifiedBackupIds]);
 
   return (
     <ThemedView style={styles.screen}>

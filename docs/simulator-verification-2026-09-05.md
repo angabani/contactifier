@@ -103,3 +103,37 @@ marker-finalization recovery, photo-byte verification, and permission-change evi
   `full-access-required`, and no writer ran, but durable permission evidence was not recorded because
   no compatible ownership-verified preflight was available. Simulator Contacts permission was
   restored immediately afterward.
+
+## Completion, finalization, photo, and permission certification — 2026-09-10
+
+- Added a development-only completion suite that is hard-locked to iOS Simulator and contacts with
+  Contactifier certification ownership markers.
+- The suite deleted the owned `photo-a` fixture in completed workflow
+  `c2a86be9-5e4f-407e-aab9-55db23982c5a` and restored it through the separate journaled Undo workflow
+  `90244677-9c5d-40a5-b54e-b166030e89b6`.
+- Undo recreation removed its reconciliation marker, deliberately lost the native finalization
+  response, then resumed finalization idempotently under a fresh authorization and completed.
+- The restored native photo bytes matched the authenticated backup asset at SHA-256
+  `31ae3a734a4db027da80549a9e3287c03f6e737e30cd14c7f27dee8503fa248a`.
+- A separate owned, unexecuted preflight `ae5ab36a-7d9a-4225-824d-6cfdc63298c1` was retained for
+  permission certification. Simulator Contacts permission was revoked and the authorization gate
+  rejected execution solely with `full-access-required`; revision 1 and zero journal entries were
+  unchanged. Durable evidence was saved, and Contacts permission was restored immediately.
+- Certification reporting now validates permission and photo evidence against each evidence item's
+  own persisted workflow and backup. Independent safety scenarios no longer need to share an
+  unrelated selected backup ID.
+
+## Full durable-evidence certification — 2026-09-10
+
+- The final clean-baseline run completed mutation workflow
+  `34eb4856-8c37-49a0-a421-9fe550f221fb`, separate Undo workflow
+  `8c3d28e6-0323-415e-a323-d55a26e30d3c`, and rich merge workflow
+  `d65a9b86-2f53-4858-bc92-d296f4474136`.
+- The rich verified backup `f52d8e63-1562-4cfc-9465-ee5071fe78ca` was restored through two
+  independently journaled transactions. A safely rolled-back child is retried only from a fresh
+  native snapshot; already completed children are never replayed.
+- Restore preparation now preserves the current canonical identity when a previously recreated
+  native contact is updated from an older backup identity. A regression test covers this case.
+- The generated report displayed `CERTIFIED`; all nine scenarios passed from durable workflow,
+  permission, backup, native verification, and photo-hash evidence.
+- Simulator Contacts permission was left restored. No physical-device contact store was involved.

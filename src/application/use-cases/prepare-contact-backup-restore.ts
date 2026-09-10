@@ -46,10 +46,10 @@ export function prepareContactBackupRestore(input: {
     const id = `restore-${index}-${item.backupContact.id}`;
     const before = item.currentContact ?? item.backupContact;
     const after = item.currentContact
-      ? { ...item.backupContact, recordRef: item.currentContact.recordRef }
+      ? { ...item.backupContact, id: item.currentContact.id, recordRef: item.currentContact.recordRef }
       : item.backupContact;
     return {
-      id, kind: 'update', contactId: item.backupContact.id,
+      id, kind: 'update', contactId: before.id,
       before, after,
       origin: 'user', confidence: createConfidenceScore(1), reasons: ['Restore exact contact from verified backup'],
       decision: 'accepted',
@@ -69,7 +69,11 @@ export function prepareContactBackupRestore(input: {
   const restoreOperations: ContactWriteOperation[] = affected.map((item, index) => {
     const changeId = restoreChanges[index].id;
     if (item.kind === 'update' && item.currentContact) {
-      const after = { ...item.backupContact, recordRef: item.currentContact.recordRef };
+      const after = {
+        ...item.backupContact,
+        id: item.currentContact.id,
+        recordRef: item.currentContact.recordRef,
+      };
       return {
         id: `${changeId}:update:0`, changeId, kind: 'update',
         sourceContactId: item.currentContact.recordRef.sourceContactId,

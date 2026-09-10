@@ -209,7 +209,7 @@ describe('iOS certification report', () => {
     expect(status(rolledBack('verification-failed'))).toBe('passed');
   });
 
-  it('binds permission denial proof to the selected backup and unchanged owned preflight', () => {
+  it('binds permission denial proof to its own backup and unchanged owned preflight', () => {
     const completed = completedWorkflow({ id: 'permission', changeSetId: 'permission' });
     const preflight: CleanupWorkflow = { ...completed, phase: 'preflighted', revision: 2, journal: [] };
     const evidence = {
@@ -224,7 +224,7 @@ describe('iOS certification report', () => {
         fixtureSetReady: true, workflows: [workflow], permissionEvidence: evidence,
       }).items.find(({ id }) => id === 'permission-change')?.status;
     expect(status('backup', preflight)).toBe('passed');
-    expect(status('another-backup', preflight)).toBe('pending');
+    expect(status('another-backup', preflight)).toBe('passed');
     expect(status('backup', { ...preflight, revision: 3 })).toBe('pending');
   });
 

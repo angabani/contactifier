@@ -7,10 +7,12 @@ import { Platform } from 'react-native';
 import {
   ContactWriteCapabilityGate,
   ContactWriteCapabilityError,
+  createExactDuplicateChangeSet,
   ExecuteContactWritePlan,
   PhotoMaterializingContactWriter,
   prepareContactTransactionUndo,
   prepareContactBackupRestore,
+  resolveMergeConflict,
   ReconcileUnknownContactWrite,
   ResumeContactWriteVerification,
   ResumeContactWriteFinalization,
@@ -19,6 +21,10 @@ import {
   type ContactWriterCertification,
 } from '@/application';
 import {
+  createChangeSet,
+  createConfidenceScore,
+  analyzeExactDuplicates,
+  findMergeConflicts,
   transitionCleanupWorkflow,
   contactsSemanticallyEqual,
   type BackupManifest,
@@ -26,6 +32,7 @@ import {
   type ContactSnapshot,
   type CanonicalContact,
 } from '@/domain';
+import { IOS_FIXTURE_MARKER_PREFIX } from '@/features/developer/ios-certification-fixtures';
 import { assertSimulatorFixtureWritePlan } from '@/features/developer/simulator-fixture-write-policy';
 import { createIosPermissionDenialEvidence } from '@/features/developer/ios-certification-permission-evidence';
 import { createIosPhotoRoundTripEvidence } from '@/features/developer/ios-certification-photo-evidence';
@@ -40,8 +47,8 @@ import {
   manageCleanupWorkflow,
   workflowRepository as repository,
 } from './cleanup-workflow';
-import { backupStore, listContactBackups, loadContactBackup } from './contact-backup';
-import { readDeviceContacts } from './device-contact-scan';
+import { backupStore, createContactBackup, listContactBackups, loadContactBackup } from './contact-backup';
+import { prepareDeviceContactWrite, readDeviceContacts } from './device-contact-scan';
 import { iosCertificationEvidence } from './ios-certification-evidence';
 import { iosCertificationPhotoEvidence } from './ios-certification-photo-evidence';
 
@@ -479,6 +486,180 @@ export async function prepareAndExecuteSimulatorFixtureUndo(
   });
   undo = await manageCleanupWorkflow.preflight(undo, prepared.writePlan);
   return executeSimulatorFixtureWrite(undo);
+}
+
+async function prepareOwnedFixtureDelete(fixtureKey: string): Promise<{
+  readonly workflow: CleanupWorkflow;
+  readonly manifest: BackupManifest;
+}> {
+  if (!__DEV__ || Platform.OS !== 'ios' || Device.isDevice) {
+    throw new Error('Owned fixture preparation is restricted to the iOS Simulator.');
+  }
+  const snapshot = await readDeviceContacts.execute({ source: { kind: 'device' } });
+  const markerSuffix = `/${fixtureKey}`;
+  const contact = snapshot.contacts.find(({ urls }) => urls.some(({ value }) =>
+    value.startsWith(IOS_FIXTURE_MARKER_PREFIX) && value.endsWith(markerSuffix)));
+  if (!contact) throw new Error(`Owned simulator fixture ${fixtureKey} is unavailable.`);
+  const manifest = await createContactBackup.execute({ snapshot });
+  const changeSet = createChangeSet({
+    id: `${snapshot.id}:certification-delete:${fixtureKey}`,
+    snapshotId: snapshot.id,
+    createdAt: snapshot.createdAt,
+    changes: [{
+      id: `certification-delete:${fixtureKey}`,
+      kind: 'delete',
+      contactId: contact.id,
+      before: contact,
+      origin: 'user',
+      confidence: createConfidenceScore(1),
+      reasons: ['Explicit disposable Simulator certification fixture'],
+      decision: 'accepted',
+    }],
+  });
+  let workflow = await manageCleanupWorkflow.start({
+    source: snapshot.source,
+    snapshotId: snapshot.id,
+    backupId: manifest.id,
+    changeSet,
+  });
+  const plan = await prepareDeviceContactWrite.execute({
+    analyzedSnapshot: snapshot,
+    backup: manifest,
+    changeSet,
+  });
+  workflow = await manageCleanupWorkflow.preflight(workflow, plan);
+  return Object.freeze({ workflow, manifest });
+}
+
+export interface SimulatorCompletionSuiteResult {
+  readonly mutation: CleanupWorkflow;
+  readonly undo: CleanupWorkflow;
+  readonly permissionPreflight: CleanupWorkflow;
+  readonly merge: CleanupWorkflow;
+  readonly restoration: SimulatorTransactionBatchResult;
+  readonly photoSha256: string;
+  readonly backupId: string;
+}
+
+async function executeOwnedRichMergeAndRestore(): Promise<{
+  readonly merge: CleanupWorkflow;
+  readonly restoration: SimulatorTransactionBatchResult;
+  readonly backupId: string;
+}> {
+  const snapshot = await readDeviceContacts.execute({ source: { kind: 'device' } });
+  const manifest = await createContactBackup.execute({ snapshot });
+  const proposed = createExactDuplicateChangeSet({
+    snapshot,
+    analysis: analyzeExactDuplicates(snapshot),
+    createdAt: snapshot.createdAt,
+  });
+  const ownsKey = (contact: CanonicalContact, key: string) => contact.urls.some(({ value }) =>
+    value.startsWith(IOS_FIXTURE_MARKER_PREFIX) && value.endsWith(`/${key}`));
+  const richMerge = proposed.changes.find((change) => change.kind === 'merge' &&
+    change.before.some((contact) => ownsKey(contact, 'rich-a')) &&
+    change.before.some((contact) => ownsKey(contact, 'rich-b')));
+  if (!richMerge || richMerge.kind !== 'merge') {
+    throw new Error('The owned rich merge fixture pair is unavailable.');
+  }
+  let changeSet = createChangeSet({
+    id: `${snapshot.id}:certification-rich-merge`,
+    snapshotId: snapshot.id,
+    createdAt: snapshot.createdAt,
+    changes: [{ ...richMerge, id: 'certification-rich-merge', decision: 'accepted' }],
+  });
+  for (const conflict of findMergeConflicts(richMerge.before)) {
+    const preferred = conflict.options.find(({ sourceContactId }) =>
+      richMerge.before.some((contact) =>
+        contact.id === sourceContactId && ownsKey(contact, 'rich-a')))
+      ?? conflict.options[0];
+    if (!preferred) throw new Error(`Rich fixture conflict ${conflict.field} has no source.`);
+    changeSet = resolveMergeConflict({
+      changeSet,
+      changeId: 'certification-rich-merge',
+      field: conflict.field,
+      sourceContactId: preferred.sourceContactId,
+    });
+  }
+  let workflow = await manageCleanupWorkflow.start({
+    source: snapshot.source,
+    snapshotId: snapshot.id,
+    backupId: manifest.id,
+    changeSet,
+  });
+  const plan = await prepareDeviceContactWrite.execute({
+    analyzedSnapshot: snapshot,
+    backup: manifest,
+    changeSet,
+  });
+  workflow = await manageCleanupWorkflow.preflight(workflow, plan);
+  const merge = await executeSimulatorFixtureWrite(workflow);
+  if (merge.phase !== 'completed') throw new Error('The owned rich merge did not complete.');
+  const firstRestoration = await restoreSimulatorFixtureBackup(manifest);
+  const retryRestoration = firstRestoration.attentionCount > 0 || firstRestoration.rolledBackCount > 0
+    ? await restoreSimulatorFixtureBackup(manifest)
+    : null;
+  const transactions = [
+    ...firstRestoration.transactions,
+    ...(retryRestoration?.transactions ?? []),
+  ];
+  const restoration: SimulatorTransactionBatchResult = Object.freeze({
+    transactions: Object.freeze(transactions),
+    completedCount: transactions.filter(({ phase }) => phase === 'completed').length,
+    rolledBackCount: transactions.filter(({ phase }) => phase === 'rolled-back').length,
+    attentionCount: transactions.filter(({ phase }) => !['completed', 'rolled-back'].includes(phase)).length,
+  });
+  if (
+    restoration.attentionCount > 0 ||
+    (retryRestoration ? retryRestoration.completedCount === 0 : restoration.completedCount === 0)
+  ) {
+    const outcomes = restoration.transactions.map(({ id, phase, failure, rollbackCause }) =>
+      `${id}:${phase}:${failure?.code ?? rollbackCause ?? 'none'}`).join(', ');
+    throw new Error(`The rich fixture backup restoration did not complete every transaction (${outcomes}).`);
+  }
+  return Object.freeze({ merge, restoration, backupId: manifest.id });
+}
+
+/** Runs only against marker-owned disposable Simulator contacts. */
+export async function executeSimulatorCompletionSuite(): Promise<SimulatorCompletionSuiteResult> {
+  const preparedPhotoDelete = await prepareOwnedFixtureDelete('photo-a');
+  const mutation = await executeSimulatorFixtureWrite(preparedPhotoDelete.workflow);
+  if (mutation.phase !== 'completed') {
+    throw new Error('The owned photo-fixture mutation did not complete.');
+  }
+
+  const afterDelete = await readDeviceContacts.execute({ source: mutation.source });
+  const plannedAt = clock.now().toISOString();
+  const preparedUndo = prepareContactTransactionUndo({
+    workflow: mutation,
+    currentSnapshot: afterDelete,
+    plannedAt,
+  });
+  let undo = await manageCleanupWorkflow.start({
+    source: mutation.source,
+    snapshotId: afterDelete.id,
+    backupId: mutation.backupId,
+    changeSet: preparedUndo.changeSet,
+  });
+  undo = await manageCleanupWorkflow.preflight(undo, preparedUndo.writePlan);
+  undo = await executeSimulatorLostFinalizationResponseTrial(undo);
+  const photoEvidence = await certifySimulatorPhotoRoundTrip(
+    undo,
+    preparedPhotoDelete.manifest,
+  );
+
+  const rich = await executeOwnedRichMergeAndRestore();
+
+  // Preserve a distinct, never-executed workflow for the subsequent permission gate trial.
+  const permissionPreflight = (await prepareOwnedFixtureDelete('cleanup-update')).workflow;
+  return Object.freeze({
+    mutation,
+    undo,
+    permissionPreflight,
+    merge: rich.merge,
+    restoration: rich.restoration,
+    photoSha256: photoEvidence.actualSha256,
+    backupId: rich.backupId,
+  });
 }
 
 export async function restoreSimulatorFixtureBackup(

@@ -10,6 +10,8 @@ export const IOS_SIMULATOR_ROLLBACK_TRIAL_TOKEN = 'contactifier-run-owned-rollba
 export const IOS_SIMULATOR_LOST_WRITE_RESPONSE_TRIAL_TOKEN = 'contactifier-run-owned-lost-write-response-v1';
 export const IOS_SIMULATOR_LATEST_BACKUP_ALIAS = 'latest';
 export const IOS_SIMULATOR_PERMISSION_DENIAL_TRIAL_TOKEN = 'contactifier-run-permission-denial-v1';
+export const IOS_SIMULATOR_COMPLETION_SUITE_TOKEN = 'contactifier-run-completion-suite-v1';
+export const IOS_SIMULATOR_REPORT_TOKEN = 'contactifier-generate-report-v1';
 
 export type IosCertificationDenialReason =
   | 'development-build-required'

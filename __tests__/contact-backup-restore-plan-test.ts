@@ -87,4 +87,32 @@ describe('contact backup restore plan', () => {
     });
     expect(prepared.writePlan).toMatchObject({ createCount: 0, updateCount: 0, deleteCount: 1 });
   });
+
+  it('preserves the current canonical identity when updating an edited recreated alias', () => {
+    const recreatedB = {
+      ...originalB,
+      id: 'current-canonical-b',
+      displayName: 'Edited B',
+      name: { givenName: 'Edited B' },
+      recordRef: { source, sourceContactId: 'native-recreated-b' },
+    };
+    const current = createContactSnapshot({
+      id: 'current', schemaVersion: 1, source, accessScope: 'all', createdAt: at,
+      contacts: [originalA, recreatedB],
+    });
+    const prepared = prepareContactBackupRestore({
+      manifest, backupSnapshot, currentSnapshot: current,
+      sourceAliases: new Map([['native-b', 'native-recreated-b']]), plannedAt: at,
+    });
+
+    expect(prepared.writePlan.operations[0]).toMatchObject({
+      kind: 'update', sourceContactId: 'native-recreated-b',
+      before: { id: 'current-canonical-b' },
+      after: { id: 'current-canonical-b', displayName: 'Original B' },
+    });
+    expect(prepared.changeSet.changes[0]).toMatchObject({
+      kind: 'update', contactId: 'current-canonical-b',
+      before: { id: 'current-canonical-b' }, after: { id: 'current-canonical-b' },
+    });
+  });
 });

@@ -65,7 +65,6 @@ export function createIosCertificationReport(input: {
     : undefined;
   if (
     input.permissionEvidence && permissionWorkflow &&
-    input.permissionEvidence.backupId === input.selectedVerifiedBackupId &&
     permissionWorkflow.backupId === input.permissionEvidence.backupId &&
     permissionWorkflow.phase === 'preflighted' &&
     permissionWorkflow.revision === input.permissionEvidence.revisionAfter &&
@@ -119,7 +118,6 @@ export function createIosCertificationReport(input: {
     operationId === input.photoEvidence?.operationId && outcome === 'applied' && receipt)?.receipt;
   if (
     input.photoEvidence && photoWorkflow &&
-    input.photoEvidence.backupId === input.selectedVerifiedBackupId &&
     photoWorkflow.backupId === input.photoEvidence.backupId &&
     photoWorkflow.revision === input.photoEvidence.workflowRevision &&
     photoOperation?.kind === 'create' &&
