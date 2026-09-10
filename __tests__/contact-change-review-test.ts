@@ -23,6 +23,7 @@ import {
   contactReviewValues,
   createMergePreviewPresentation,
 } from '@/features/contact-review/contact-change-presentation';
+import { isWorkflowCompatibleWithActiveScan } from '@/features/contact-review/contact-review-workflow-selection';
 
 function contact(
   id: string,
@@ -75,6 +76,36 @@ function proposed(contacts: readonly CanonicalContact[]) {
 }
 
 describe('contact change review', () => {
+  it('only resumes a device workflow for the currently scanned snapshot', () => {
+    const workflow = createCleanupWorkflow({
+      id: 'workflow-current-scan',
+      source: { kind: 'device' },
+      snapshotId: 'snapshot-review',
+      backupId: 'backup-current',
+      changeSet: proposed([
+        contact('a', 'Ada', '212-555-0100'),
+        contact('b', 'Ada B', '(212) 555-0100'),
+      ]),
+      createdAt: '2026-08-17T10:00:00.000Z',
+    });
+
+    expect(isWorkflowCompatibleWithActiveScan(workflow, {
+      status: 'success',
+      mode: 'device',
+      snapshotId: 'snapshot-review',
+    })).toBe(true);
+    expect(isWorkflowCompatibleWithActiveScan(workflow, {
+      status: 'success',
+      mode: 'device',
+      snapshotId: 'snapshot-new',
+    })).toBe(false);
+    expect(isWorkflowCompatibleWithActiveScan(workflow, {
+      status: 'success',
+      mode: 'demo',
+      snapshotId: 'snapshot-new',
+    })).toBe(true);
+  });
+
   it('provides a deterministic in-app demo with two duplicate clusters', () => {
     const demo = createDemoContactSnapshot();
     const analysis = analyzeExactDuplicates(demo);

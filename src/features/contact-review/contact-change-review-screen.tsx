@@ -54,6 +54,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { IOS_SIMULATOR_PREPARE_SINGLE_WRITE_TOKEN } from '@/features/developer/ios-certification-policy';
 
 import { contactReviewValues, createMergePreviewPresentation } from './contact-change-presentation';
+import { isWorkflowCompatibleWithActiveScan } from './contact-review-workflow-selection';
 
 const decisions: readonly ReviewDecision[] = [
   'accepted',
@@ -982,8 +983,10 @@ export function ContactChangeReviewScreen() {
         const resumable = await manageCleanupWorkflow.listResumable();
         for (const item of resumable) {
           const saved = await manageCleanupWorkflow.load(item.id);
-          const matchesActiveScan = state.status !== 'success' || state.mode !== 'device'
-            || saved?.snapshotId === state.snapshot.id;
+          const matchesActiveScan = saved && isWorkflowCompatibleWithActiveScan(saved,
+            state.status === 'success'
+              ? { status: 'success', mode: state.mode, snapshotId: state.snapshot.id }
+              : { status: state.status });
           if (saved && saved.changeSet.changes.length > 0 && matchesActiveScan) {
             if (active) setWorkflow(saved);
             return;
