@@ -24,6 +24,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { resolveHomePriority } from '@/features/home/resolve-home-priority';
 import { useSmartMatching } from '@/features/smart-matching/use-smart-matching';
 import {
+  IOS_SIMULATOR_HOSTED_MODEL_REDOWNLOAD_TOKEN,
   IOS_SIMULATOR_LOCAL_MODEL_TOKEN,
   IOS_SIMULATOR_DISCARD_REVIEW_TOKEN,
   IOS_SIMULATOR_READ_ONLY_SCAN_TOKEN,
@@ -119,13 +120,21 @@ export function DeviceContactScanScreen() {
   }, [scan, scanToken]);
 
   useEffect(() => {
+    const localActivationReady = smartModelToken === IOS_SIMULATOR_LOCAL_MODEL_TOKEN
+      && smartMatching.state?.status === 'available';
+    const hostedRedownloadReady = smartModelToken === IOS_SIMULATOR_HOSTED_MODEL_REDOWNLOAD_TOKEN
+      && smartMatching.state !== null
+      && smartMatching.state.status !== 'downloading'
+      && smartMatching.state.status !== 'verifying';
     if (
       automaticLocalModelStarted.current || !__DEV__ || Platform.OS !== 'ios' || Device.isDevice
-      || Constants.appOwnership === AppOwnership.Expo || smartModelToken !== IOS_SIMULATOR_LOCAL_MODEL_TOKEN
-      || smartMatching.state?.status !== 'available'
+      || Constants.appOwnership === AppOwnership.Expo || (!localActivationReady && !hostedRedownloadReady)
     ) return;
     automaticLocalModelStarted.current = true;
-    void smartMatching.enable();
+    void (async () => {
+      if (hostedRedownloadReady) await smartMatching.disable();
+      await smartMatching.enable();
+    })();
   }, [smartMatching, smartModelToken]);
 
   useEffect(() => {

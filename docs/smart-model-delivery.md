@@ -59,3 +59,8 @@ atomic activation path as a remote artifact.
 The exact deep-link token `contactifier:///?smartModel=contactifier-local-model-v1` grants consent and
 starts activation for automated simulator verification. Both the local inbox and token are disabled
 in production, Expo Go, Android, and physical-device builds.
+
+With an HTTPS manifest configured, the exact development-only token
+`contactifier:///?smartModel=contactifier-hosted-model-redownload-v1` removes only the cached
+Simulator model and immediately downloads, verifies, and activates the catalog artifact again. It
+has the same release, Expo Go, Android, and physical-device exclusions as local inbox activation.

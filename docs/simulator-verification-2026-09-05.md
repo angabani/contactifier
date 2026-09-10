@@ -137,3 +137,19 @@ marker-finalization recovery, photo-byte verification, and permission-change evi
 - The generated report displayed `CERTIFIED`; all nine scenarios passed from durable workflow,
   permission, backup, native verification, and photo-hash evidence.
 - Simulator Contacts permission was left restored. No physical-device contact store was involved.
+
+## Hosted model redownload and fixture rescore — 2026-09-10
+
+- Rebuilt and launched the development client on the isolated iPhone 17 Simulator with
+  `EXPO_PUBLIC_SMART_MODEL_MANIFEST_URL=https://contactifier.pages.dev/manifest.json`.
+- Used the simulator-only hosted-redownload token to remove only the cached model and immediately
+  resolve the Cloudflare manifest, download, verify, and activate its artifact again.
+- The newly recreated on-device artifact was 110,834 bytes and had SHA-256
+  `0febb9f5cef449433141ee666b3d378e1c84548f4086d2b992fa86db1d1bb7e8`, exactly matching the
+  manifest and hosted source. Its filesystem modification time confirmed this was a fresh download,
+  not the prior local-inbox artifact.
+- A fresh read-only scan and smart-model rescore against marker-owned `[Contactifier Test]` contacts
+  produced eight review items. The review remained at zero approved, zero ignored, and zero contact
+  writes; no physical-device contact store was involved.
+- This validates hosted delivery and Simulator product-path integration only. The bootstrap model
+  remains ineligible for release promotion because it was trained on synthetic fixtures.
