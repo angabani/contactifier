@@ -1,0 +1,9 @@
+{
+  "active": {
+    "version": "bootstrap-lightgbm-v1",
+    "format": "contactifier-tree-ensemble-v1",
+    "url": "https://contactifier.pages.dev/models/contactifier-lightgbm-v1.model",
+    "sha256": "0febb9f5cef449433141ee666b3d378e1c84548f4086d2b992fa86db1d1bb7e8",
+    "sizeInBytes": 110834
+  }
+}

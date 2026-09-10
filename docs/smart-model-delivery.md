@@ -33,6 +33,22 @@ The app downloads to a temporary file, enforces size limits, verifies SHA-256, v
 data-only model structure, and only then switches active metadata. A failed replacement leaves the
 previous model file and activation record intact.
 
+## Hosted bootstrap download test
+
+The Cloudflare Pages test catalog is available at
+`https://contactifier.pages.dev/manifest.json`. Set the following in the ignored `.env.local` file
+to exercise the real HTTPS consent, download, verification, and activation flow in development:
+
+```dotenv
+EXPO_PUBLIC_SMART_MODEL_MANIFEST_URL=https://contactifier.pages.dev/manifest.json
+```
+
+The currently published `bootstrap-lightgbm-v1` artifact is trained only on synthetic fixtures. It
+validates delivery and runtime compatibility, but its evaluation report has
+`promotionEligible: false`; do not configure this catalog in a release build until a model trained
+and evaluated on an approved representative dataset passes the promotion gates in the lifecycle
+runbook.
+
 ## Local simulator delivery before HTTPS hosting
 
 Development iOS Simulator builds look for `Documents/contactifier-model-inbox/local.model` only when
