@@ -153,3 +153,13 @@ marker-finalization recovery, photo-byte verification, and permission-change evi
   writes; no physical-device contact store was involved.
 - This validates hosted delivery and Simulator product-path integration only. The bootstrap model
   remains ineligible for release promotion because it was trained on synthetic fixtures.
+
+## Hosted model decline and deterministic fallback — 2026-09-10
+
+- Exercised the real Smart Matching disable path using the simulator-only hosted-decline token.
+- Settings persisted Smart Matching as off and displayed the optional model-download explanation.
+- The previously activated 110,834-byte cached artifact was removed from the app container.
+- A subsequent read-only scan continued with deterministic matching and did not recreate or
+  redownload the model artifact.
+- The existing protected review remained resumable. No suggestion was approved, no contact write
+  ran, and no physical-device contact store was involved.

@@ -64,3 +64,7 @@ With an HTTPS manifest configured, the exact development-only token
 `contactifier:///?smartModel=contactifier-hosted-model-redownload-v1` removes only the cached
 Simulator model and immediately downloads, verifies, and activates the catalog artifact again. It
 has the same release, Expo Go, Android, and physical-device exclusions as local inbox activation.
+
+The companion token `contactifier:///?smartModel=contactifier-hosted-model-decline-v1` exercises
+the decline path: it persists disabled consent, removes only the cached Simulator model, and does
+not invoke model delivery. A subsequent read-only scan continues with deterministic matching.

@@ -3,6 +3,7 @@ export const IOS_SIMULATOR_SEED_TOKEN = 'contactifier-dataset-v2';
 export const IOS_SIMULATOR_READ_ONLY_SCAN_TOKEN = 'contactifier-read-only-scan-v1';
 export const IOS_SIMULATOR_LOCAL_MODEL_TOKEN = 'contactifier-local-model-v1';
 export const IOS_SIMULATOR_HOSTED_MODEL_REDOWNLOAD_TOKEN = 'contactifier-hosted-model-redownload-v1';
+export const IOS_SIMULATOR_HOSTED_MODEL_DECLINE_TOKEN = 'contactifier-hosted-model-decline-v1';
 export const IOS_SIMULATOR_DISCARD_REVIEW_TOKEN = 'contactifier-discard-review-v1';
 export const IOS_SIMULATOR_PREPARE_SINGLE_WRITE_TOKEN = 'contactifier-prepare-owned-single-write-v1';
 export const IOS_SIMULATOR_RESET_FIXTURES_TOKEN = 'contactifier-reset-owned-fixtures-v1';

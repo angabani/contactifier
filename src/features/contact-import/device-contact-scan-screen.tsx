@@ -24,6 +24,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { resolveHomePriority } from '@/features/home/resolve-home-priority';
 import { useSmartMatching } from '@/features/smart-matching/use-smart-matching';
 import {
+  IOS_SIMULATOR_HOSTED_MODEL_DECLINE_TOKEN,
   IOS_SIMULATOR_HOSTED_MODEL_REDOWNLOAD_TOKEN,
   IOS_SIMULATOR_LOCAL_MODEL_TOKEN,
   IOS_SIMULATOR_DISCARD_REVIEW_TOKEN,
@@ -60,7 +61,7 @@ export function DeviceContactScanScreen() {
   const previousStatus = useRef(state.status);
   const previousSmartStatus = useRef(smartMatching.state?.status);
   const automaticReadOnlyScanStarted = useRef(false);
-  const automaticLocalModelStarted = useRef(false);
+  const automaticSmartModelToken = useRef<string | undefined>(undefined);
   const automaticDiscardStarted = useRef(false);
   const automaticResumeStarted = useRef(false);
   const celebrateNextSuccess = useRef(false);
@@ -126,13 +127,20 @@ export function DeviceContactScanScreen() {
       && smartMatching.state !== null
       && smartMatching.state.status !== 'downloading'
       && smartMatching.state.status !== 'verifying';
+    const hostedDeclineReady = smartModelToken === IOS_SIMULATOR_HOSTED_MODEL_DECLINE_TOKEN
+      && smartMatching.state !== null
+      && smartMatching.state.consent !== 'disabled'
+      && smartMatching.state.status !== 'downloading'
+      && smartMatching.state.status !== 'verifying';
     if (
-      automaticLocalModelStarted.current || !__DEV__ || Platform.OS !== 'ios' || Device.isDevice
-      || Constants.appOwnership === AppOwnership.Expo || (!localActivationReady && !hostedRedownloadReady)
+      automaticSmartModelToken.current === smartModelToken || !__DEV__ || Platform.OS !== 'ios' || Device.isDevice
+      || Constants.appOwnership === AppOwnership.Expo
+      || (!localActivationReady && !hostedRedownloadReady && !hostedDeclineReady)
     ) return;
-    automaticLocalModelStarted.current = true;
+    automaticSmartModelToken.current = smartModelToken;
     void (async () => {
-      if (hostedRedownloadReady) await smartMatching.disable();
+      if (hostedRedownloadReady || hostedDeclineReady) await smartMatching.disable();
+      if (hostedDeclineReady) return;
       await smartMatching.enable();
     })();
   }, [smartMatching, smartModelToken]);
