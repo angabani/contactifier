@@ -88,3 +88,18 @@ marker-finalization recovery, photo-byte verification, and permission-change evi
   current pass did not record durable evidence.
 - Physical-iPhone read-only validation and HTTPS model delivery require their actual target device
   and production hosting configuration.
+
+## Snapshot compatibility hardening — 2026-09-10
+
+- Repeated fixture certification exposed older resumable reviews whose change-set snapshot differed
+  from the newest active scan.
+- Review now selects a persisted workflow only when it matches the active device snapshot; older
+  history remains preserved instead of being used for a new preflight.
+- Development-only automatic preparation additionally requires the workflow and hydrated scan to
+  have the exact same snapshot ID.
+- Preflight failures now display their precise safety rejection instead of collapsing every cause
+  into a generic “contact or backup changed” message.
+- A Simulator permission-revocation probe was attempted. The authorization harness reported
+  `full-access-required`, and no writer ran, but durable permission evidence was not recorded because
+  no compatible ownership-verified preflight was available. Simulator Contacts permission was
+  restored immediately afterward.

@@ -514,7 +514,7 @@ function ReadyReview({
   const [plan, setPlan] = useState<ContactWritePlan | null>(initialPlan ?? null);
   const [isPreparing, setIsPreparing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [prepareError, setPrepareError] = useState(false);
+  const [prepareError, setPrepareError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const executionInFlight = useRef(false);
@@ -561,7 +561,7 @@ function ReadyReview({
     setIsSaving(true);
     setSaveError(false);
     setPlan(null);
-    setPrepareError(false);
+    setPrepareError(null);
     try {
       await onReview(next);
       setChangeSet(next);
@@ -600,14 +600,14 @@ function ReadyReview({
 
   const prepare = async (): Promise<ContactWritePlan | null> => {
     setIsPreparing(true);
-    setPrepareError(false);
+    setPrepareError(null);
     try {
       const prepared = await onPrepare(changeSet);
       setPlan(prepared);
       return prepared;
-    } catch {
+    } catch (error) {
       setPlan(null);
-      setPrepareError(true);
+      setPrepareError(error instanceof Error ? error.message : 'The safety check failed unexpectedly.');
       return null;
     } finally {
       setIsPreparing(false);
@@ -655,8 +655,8 @@ function ReadyReview({
         const prepared = await onPrepare(next);
         setChangeSet(next);
         setPlan(prepared);
-      } catch {
-        setPrepareError(true);
+      } catch (error) {
+        setPrepareError(error instanceof Error ? error.message : 'The safety check failed unexpectedly.');
       } finally {
         setIsSaving(false);
       }
@@ -884,7 +884,7 @@ function ReadyReview({
               <View style={[styles.prepareError, { borderColor: theme.danger }]}>
                 <ThemedText type="smallBold">Dry run could not be prepared</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
-                  A contact or backup changed after review. Scan again before continuing.
+                  {prepareError}
                 </ThemedText>
               </View>
             )}
@@ -982,7 +982,9 @@ export function ContactChangeReviewScreen() {
         const resumable = await manageCleanupWorkflow.listResumable();
         for (const item of resumable) {
           const saved = await manageCleanupWorkflow.load(item.id);
-          if (saved && saved.changeSet.changes.length > 0) {
+          const matchesActiveScan = state.status !== 'success' || state.mode !== 'device'
+            || saved?.snapshotId === state.snapshot.id;
+          if (saved && saved.changeSet.changes.length > 0 && matchesActiveScan) {
             if (active) setWorkflow(saved);
             return;
           }
@@ -1073,6 +1075,8 @@ export function ContactChangeReviewScreen() {
     __DEV__ && Platform.OS === 'ios' && !Device.isDevice && state.status === 'success' && state.mode === 'device';
   const autoPrepareSingleOwnedFixture =
     __DEV__ && Platform.OS === 'ios' && !Device.isDevice &&
+    state.status === 'success' && state.mode === 'device' &&
+    workflow?.snapshotId === state.snapshot.id &&
     Constants.appOwnership !== AppOwnership.Expo &&
     [certify, prepareToken].some((value) =>
       (Array.isArray(value) ? value[0] : value) === IOS_SIMULATOR_PREPARE_SINGLE_WRITE_TOKEN);
