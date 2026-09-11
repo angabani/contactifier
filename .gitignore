@@ -55,6 +55,9 @@ __pycache__/
 *.ort.download
 *.onnx.download
 
+# private contact exports
+*.vcf
+
 /example/
 
 # generated native folders
