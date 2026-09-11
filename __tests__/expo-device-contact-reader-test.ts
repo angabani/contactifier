@@ -133,6 +133,20 @@ describe('Expo device contacts infrastructure', () => {
     expect(result.urls).toEqual([]);
   });
 
+  it('normalizes native yearless date sentinels and omits only malformed dates', () => {
+    const result = mapExpoContact(expoContact({
+      birthday: { month: 2, day: 29, year: Number.NaN },
+      dates: [
+        { id: 'valid-yearless', label: 'anniversary', date: { month: 5, day: 4, year: 0 } },
+        { id: 'invalid-date', label: 'legacy', date: { month: 13, day: 40, year: 2020 } },
+      ],
+    }), { kind: 'device' });
+
+    expect(result.birthdays[0].value).toEqual({ month: 2, day: 29 });
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].value.date).toEqual({ month: 5, day: 4 });
+  });
+
   it('does not turn an empty native contact into a synthetic name', () => {
     const result = mapExpoContact(
       expoContact({ fullName: null, givenName: null, familyName: null, company: null }),

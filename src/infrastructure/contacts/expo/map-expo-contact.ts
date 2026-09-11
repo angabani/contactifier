@@ -27,6 +27,21 @@ function sourceValue<T>(id: string, value: T, label?: string): ContactValue<T> {
   return compact({ id, value, label, origin: 'source' as const });
 }
 
+function mapContactDate(input: { readonly year?: number; readonly month: number; readonly day: number }) {
+  const year = Number.isInteger(input.year) && input.year !== 0 ? input.year : undefined;
+  try {
+    return createContactDate({
+      month: input.month,
+      day: input.day,
+      ...(year === undefined ? {} : { year }),
+    });
+  } catch {
+    // Native stores can contain partial or malformed legacy dates. Preserve the
+    // contact and omit only the invalid date rather than aborting the directory.
+    return undefined;
+  }
+}
+
 export function mapExpoContact(
   contact: ExpoContactDetails,
   source: ContactSourceRef,
@@ -105,17 +120,19 @@ export function mapExpoContact(
         : [],
     ),
     birthdays: contact.birthday
-      ? [sourceValue(`${contact.id}:birthday`, createContactDate(contact.birthday), 'birthday')]
+      ? [mapContactDate(contact.birthday)].flatMap((date) => date
+          ? [sourceValue(`${contact.id}:birthday`, date, 'birthday')]
+          : [])
       : [],
     events: (contact.dates ?? []).flatMap((item, index) =>
       item.date
-        ? [
+        ? [mapContactDate(item.date)].flatMap((date) => date ? [
             sourceValue(
               valueId(contact.id, 'event', item.id, index),
-              { date: createContactDate(item.date), label: item.label },
+              { date, label: item.label },
               item.label,
             ),
-          ]
+          ] : [])
         : [],
     ),
     notes: [],

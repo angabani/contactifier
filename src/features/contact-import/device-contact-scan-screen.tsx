@@ -15,6 +15,8 @@ import * as Device from 'expo-device';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { createBeautificationChangeSet } from '@/application';
+import { loadSmartContactProbabilityModel } from '@/composition/smart-matching';
+import { analyzeContactMatches, analyzeContactQuality, analyzeExactDuplicates } from '@/domain';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -64,6 +66,7 @@ export function DeviceContactScanScreen() {
   const automaticSmartModelToken = useRef<string | undefined>(undefined);
   const automaticDiscardStarted = useRef(false);
   const automaticResumeStarted = useRef(false);
+  const aggregateModelComparison = useRef<string | undefined>(undefined);
   const celebrateNextSuccess = useRef(false);
   const isBusy =
     state.status === 'scanning' ||
@@ -82,6 +85,49 @@ export function DeviceContactScanScreen() {
         createdAt: state.snapshot.createdAt,
       }).changes.length
     : 0, [state]);
+  useEffect(() => {
+    if (
+      !__DEV__ || Platform.OS !== 'ios' || Device.isDevice
+      || Constants.appOwnership === AppOwnership.Expo || state.status !== 'success'
+    ) return;
+    console.info(
+      `[contactifier-scan:aggregate] contacts=${state.snapshot.contacts.length}`
+      + ` scoring=${state.matchAnalysis?.scoringMode ?? 'deterministic'}`
+      + ` matrixCandidates=${state.matchAnalysis?.candidates.length ?? 0}`
+      + ` suggestions=${suggestionCount}`,
+    );
+  }, [state, suggestionCount]);
+  useEffect(() => {
+    if (
+      !__DEV__ || Platform.OS !== 'ios' || Device.isDevice
+      || Constants.appOwnership === AppOwnership.Expo || state.status !== 'success'
+      || smartMatching.state?.status !== 'ready'
+    ) return;
+    const comparisonKey = `${state.snapshot.id}:${smartMatching.state.activeVersion}`;
+    if (aggregateModelComparison.current === comparisonKey) return;
+    aggregateModelComparison.current = comparisonKey;
+    void (async () => {
+      const model = await loadSmartContactProbabilityModel();
+      if (!model) return;
+      const [duplicateAnalysis, matchAnalysis] = await Promise.all([
+        Promise.resolve(analyzeExactDuplicates(state.snapshot)),
+        analyzeContactMatches(state.snapshot, { model }),
+      ]);
+      const comparisonSuggestions = createBeautificationChangeSet({
+        snapshot: state.snapshot,
+        duplicateAnalysis,
+        matchAnalysis,
+        qualityAnalysis: analyzeContactQuality(state.snapshot),
+        createdAt: state.snapshot.createdAt,
+      }).changes.length;
+      console.info(
+        `[contactifier-scan:model-comparison] contacts=${state.snapshot.contacts.length}`
+        + ` scoring=${matchAnalysis.scoringMode}`
+        + ` matrixCandidates=${matchAnalysis.candidates.length}`
+        + ` suggestions=${comparisonSuggestions}`,
+      );
+    })();
+  }, [smartMatching.state, state]);
   const homePriority = resolveHomePriority({
     hasRestoreConflict: false,
     hasInterruptedChange: Boolean(

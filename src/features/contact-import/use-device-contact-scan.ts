@@ -139,7 +139,11 @@ export function useDeviceContactScan() {
           matchAnalysis,
           quality: analyzeContactQuality(focusedSnapshot),
         });
-      } catch {
+      } catch (error) {
+        if (__DEV__) {
+          const detail = error instanceof Error ? `${error.name}: ${error.message}` : typeof error;
+          console.warn(`[contactifier-scan:backup] ${detail}`);
+        }
         setState({ status: 'backup-error' });
         return;
       }
@@ -147,6 +151,10 @@ export function useDeviceContactScan() {
       if (error instanceof ContactPermissionDeniedError) {
         setState({ status: 'permission-denied', canAskAgain: error.canAskAgain });
         return;
+      }
+      if (__DEV__) {
+        const detail = error instanceof Error ? `${error.name}: ${error.message}` : typeof error;
+        console.warn(`[contactifier-scan:read] ${detail}`);
       }
       setState({ status: 'error' });
     }
