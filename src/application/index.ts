@@ -80,6 +80,7 @@ export {
   type ChangeDecisionSummary,
   type ReviewDecision,
 } from './use-cases/review-change-set';
+export { proposeContactDeletion } from './use-cases/propose-contact-deletion';
 export {
   PrepareContactWrite,
   type PrepareContactWriteRequest,

@@ -4,6 +4,7 @@ import {
   createExactDuplicateChangeSet,
   resolveMergeConflict,
   resolveMergeConflictWithCustomName,
+  proposeContactDeletion,
   setChangeDecision,
   summarizeChangeDecisions,
 } from '@/application';
@@ -273,6 +274,32 @@ describe('contact change review', () => {
       after: { displayName: 'Jordan Taylor', name: { givenName: 'Jordan Taylor' } },
       resolvedConflictFields: ['name'],
     });
+  });
+
+  it('turns a reviewed merge source into an explicit reversible deletion proposal', () => {
+    const original = proposed([
+      contact('a', 'Useful Contact', '646-555-0300'),
+      contact('b', 'Unwanted Number', '(646) 555-0300'),
+    ]);
+    const change = original.changes[0];
+    if (change.kind !== 'merge') throw new Error('Expected merge fixture.');
+
+    const result = proposeContactDeletion({
+      changeSet: original,
+      changeId: change.id,
+      contactId: 'b',
+    });
+
+    expect(result.changes[0]).toMatchObject({
+      id: change.id,
+      kind: 'delete',
+      contactId: 'b',
+      before: { displayName: 'Unwanted Number' },
+      origin: 'user',
+      decision: 'pending',
+      reasons: ['Marked as unwanted during review'],
+    });
+    expect(original.changes[0].kind).toBe('merge');
   });
 
   it('creates separate proposals for disconnected duplicate groups', () => {

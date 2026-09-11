@@ -14,6 +14,7 @@ import {
   defaultContactConfirmationPreferences,
   isPerChangeCleanupWorkflow,
   requiresContactConfirmation,
+  proposeContactDeletion,
   resolveMergeConflict,
   resolveMergeConflictWithCustomName,
   decorateProposedContact,
@@ -117,12 +118,14 @@ function ChangeCard({
   onDecision,
   onResolveConflict,
   onResolveCustomName,
+  onProposeDeletion,
   onDecorate,
 }: {
   readonly change: ProposedChange;
   readonly onDecision: (decision: ReviewDecision) => void;
   readonly onResolveConflict: (field: MergeConflictField, sourceContactId: string) => void;
   readonly onResolveCustomName: (displayName: string) => Promise<void>;
+  readonly onProposeDeletion: (contactId: string) => void;
   readonly onDecorate: (decoration?: ContactDecoration) => Promise<void>;
 }) {
   const theme = useTheme();
@@ -206,6 +209,13 @@ function ChangeCard({
                       <ThemedText type="small" themeColor="textSecondary">{value.label}</ThemedText>
                     </View>
                   ))}
+                  <Pressable
+                    accessibilityLabel={`Delete ${contact.displayName || 'unnamed contact'} instead of merging it`}
+                    accessibilityRole="button"
+                    onPress={() => onProposeDeletion(contact.id)}
+                    style={styles.deleteInsteadButton}>
+                    <ThemedText type="smallBold" themeColor="danger">Delete this contact instead</ThemedText>
+                  </Pressable>
                 </View>
               </View>
             ))}
@@ -478,6 +488,20 @@ function ChangeCard({
           );
         })}
       </View>
+      {change.kind === 'update' && (
+        <Pressable
+          accessibilityLabel={`Delete ${change.before.displayName || 'unnamed contact'} instead`}
+          accessibilityRole="button"
+          onPress={() => onProposeDeletion(change.before.id)}
+          style={styles.deleteInsteadButton}>
+          <ThemedText type="smallBold" themeColor="danger">Delete this contact instead</ThemedText>
+        </Pressable>
+      )}
+      {change.kind === 'delete' && (
+        <ThemedText type="small" themeColor="textSecondary" style={styles.deleteSafetyNote}>
+          This only approves the deletion for the final safety check. Nothing is deleted yet, and History can restore it after applying.
+        </ThemedText>
+      )}
     </ThemedView>
   );
 }
@@ -695,6 +719,21 @@ function ReadyReview({
     setPlan(null);
     await onReview(next);
     setChangeSet(next);
+  };
+
+  const proposeDeletion = async (changeId: string, contactId: string) => {
+    const next = proposeContactDeletion({ changeSet, changeId, contactId });
+    setIsSaving(true);
+    setSaveError(false);
+    setPlan(null);
+    try {
+      await onReview(next);
+      setChangeSet(next);
+    } catch {
+      setSaveError(true);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const prepare = async (): Promise<ContactWritePlan | null> => {
@@ -930,6 +969,9 @@ function ReadyReview({
             if (!isSaving) void resolveConflict(item.id, field, sourceContactId);
           }}
           onResolveCustomName={(displayName) => resolveCustomName(item.id, displayName)}
+          onProposeDeletion={(contactId) => {
+            if (!isSaving) void proposeDeletion(item.id, contactId);
+          }}
           onDecorate={(decoration) => decorate(item.id, decoration)}
           onDecision={(decision) => {
             if (!isSaving) {
@@ -1432,6 +1474,8 @@ const styles = StyleSheet.create({
   sourceRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
   sourceDetail: { minHeight: 68, paddingVertical: Spacing.three },
   sourceValue: { gap: Spacing.half, paddingTop: Spacing.two },
+  deleteInsteadButton: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+  deleteSafetyNote: { lineHeight: 19 },
   sourceCopy: { flex: 1, minWidth: 0, gap: Spacing.half },
   chevron: { color: '#AEAEB2', fontSize: 32, lineHeight: 34, fontWeight: '300' },
   nativeDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#C7C7CC' },
