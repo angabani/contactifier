@@ -30,6 +30,7 @@ import { MaxContentWidth, Spacing } from '@/constants/theme';
 import {
   createDryRunContactWritePlan,
   findMergeConflicts,
+  mergeConflictResultMatchesSource,
   type ChangeDecision,
   type ChangeSet,
   type CleanupWorkflow,
@@ -147,6 +148,14 @@ function ChangeCard({
     const unresolvedConflictCount = conflicts.filter(
       ({ field }) => !change.resolvedConflictFields?.includes(field),
     ).length;
+    const hasCustomName = Boolean(
+      change.resolvedConflictFields?.includes('name') &&
+      !mergeConflictResultMatchesSource({
+        field: 'name',
+        result: change.after,
+        sources: change.before,
+      }),
+    );
     return (
       <ThemedView style={styles.mergeCard}>
         <View style={styles.mergeHero}>
@@ -271,12 +280,32 @@ function ChangeCard({
                 })}
                 {conflict.field === 'name' && (
                   <View style={styles.customNameSection}>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => { setShowCustomName((visible) => !visible); setCustomNameError(null); }}
-                      style={styles.customNameToggle}>
-                      <ThemedText type="smallBold" style={{ color: theme.primary }}>Use a different name</ThemedText>
-                    </Pressable>
+                    {hasCustomName && !showCustomName ? (
+                      <View style={styles.selectedCustomNameRow}>
+                        <View style={styles.sourceCopy}>
+                          <ThemedText type="small" themeColor="textSecondary">Selected name</ThemedText>
+                          <ThemedText type="smallBold">{change.after.displayName}</ThemedText>
+                        </View>
+                        <Pressable
+                          accessibilityLabel={`Edit selected name ${change.after.displayName}`}
+                          accessibilityRole="button"
+                          hitSlop={8}
+                          onPress={() => {
+                            setCustomName(change.after.displayName);
+                            setShowCustomName(true);
+                            setCustomNameError(null);
+                          }}>
+                          <ThemedText type="smallBold" style={{ color: theme.primary }}>Edit</ThemedText>
+                        </Pressable>
+                      </View>
+                    ) : !showCustomName ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => { setShowCustomName(true); setCustomNameError(null); }}
+                        style={styles.customNameToggle}>
+                        <ThemedText type="smallBold" style={{ color: theme.primary }}>Use a different name</ThemedText>
+                      </Pressable>
+                    ) : null}
                     {showCustomName && <>
                       <TextInput
                         accessibilityLabel="Custom contact name"
@@ -1412,6 +1441,7 @@ const styles = StyleSheet.create({
   conflictOption: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
   customNameSection: { gap: Spacing.two, paddingVertical: Spacing.two, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#C7C7CC' },
   customNameToggle: { minHeight: 44, justifyContent: 'center' },
+  selectedCustomNameRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   decorationSection: { gap: Spacing.two, paddingTop: Spacing.two },
   decorationKinds: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   decorationKind: { borderWidth: 1, borderRadius: 16, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },
