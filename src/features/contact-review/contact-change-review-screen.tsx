@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import * as Device from 'expo-device';
 import Constants, { AppOwnership } from 'expo-constants';
 import { Contact } from 'expo-contacts';
@@ -15,6 +15,7 @@ import {
   isPerChangeCleanupWorkflow,
   requiresContactConfirmation,
   proposeContactDeletion,
+  proposeMergeGroupDeletion,
   resolveMergeConflict,
   resolveMergeConflictWithCustomName,
   decorateProposedContact,
@@ -119,6 +120,7 @@ function ChangeCard({
   onResolveConflict,
   onResolveCustomName,
   onProposeDeletion,
+  onProposeGroupDeletion,
   onDecorate,
 }: {
   readonly change: ProposedChange;
@@ -126,6 +128,7 @@ function ChangeCard({
   readonly onResolveConflict: (field: MergeConflictField, sourceContactId: string) => void;
   readonly onResolveCustomName: (displayName: string) => Promise<void>;
   readonly onProposeDeletion: (contactId: string) => void;
+  readonly onProposeGroupDeletion: () => void;
   readonly onDecorate: (decoration?: ContactDecoration) => Promise<void>;
 }) {
   const theme = useTheme();
@@ -419,6 +422,19 @@ function ChangeCard({
           </Pressable>
           <Pressable accessibilityRole="button" onPress={() => onDecision('skipped')} style={styles.mergeTextButton}>
             <ThemedText type="smallBold" themeColor="textSecondary">Decide later</ThemedText>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => Alert.alert(
+              'Delete entire group?',
+              `All ${change.before.length} contacts in this group will be marked for deletion. You will still see a final confirmation, and each contact can be restored from History.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: `Delete all ${change.before.length}`, style: 'destructive', onPress: onProposeGroupDeletion },
+              ],
+            )}
+            style={styles.deleteGroupButton}>
+            <ThemedText type="smallBold" themeColor="danger">Delete entire group</ThemedText>
           </Pressable>
         </View>
       </ThemedView>
@@ -736,6 +752,21 @@ function ReadyReview({
     }
   };
 
+  const proposeGroupDeletion = async (changeId: string) => {
+    const next = proposeMergeGroupDeletion({ changeSet, changeId });
+    setIsSaving(true);
+    setSaveError(false);
+    setPlan(null);
+    try {
+      await onReview(next);
+      setChangeSet(next);
+    } catch {
+      setSaveError(true);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const prepare = async (): Promise<ContactWritePlan | null> => {
     setIsPreparing(true);
     setPrepareError(null);
@@ -971,6 +1002,9 @@ function ReadyReview({
           onResolveCustomName={(displayName) => resolveCustomName(item.id, displayName)}
           onProposeDeletion={(contactId) => {
             if (!isSaving) void proposeDeletion(item.id, contactId);
+          }}
+          onProposeGroupDeletion={() => {
+            if (!isSaving) void proposeGroupDeletion(item.id);
           }}
           onDecorate={(decoration) => decorate(item.id, decoration)}
           onDecision={(decision) => {
@@ -1475,6 +1509,7 @@ const styles = StyleSheet.create({
   sourceDetail: { minHeight: 68, paddingVertical: Spacing.three },
   sourceValue: { gap: Spacing.half, paddingTop: Spacing.two },
   deleteInsteadButton: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+  deleteGroupButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.one },
   deleteSafetyNote: { lineHeight: 19 },
   sourceCopy: { flex: 1, minWidth: 0, gap: Spacing.half },
   chevron: { color: '#AEAEB2', fontSize: 32, lineHeight: 34, fontWeight: '300' },

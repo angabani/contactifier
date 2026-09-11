@@ -5,6 +5,7 @@ import {
   resolveMergeConflict,
   resolveMergeConflictWithCustomName,
   proposeContactDeletion,
+  proposeMergeGroupDeletion,
   setChangeDecision,
   summarizeChangeDecisions,
 } from '@/application';
@@ -299,6 +300,24 @@ describe('contact change review', () => {
       decision: 'pending',
       reasons: ['Marked as unwanted during review'],
     });
+    expect(original.changes[0].kind).toBe('merge');
+  });
+
+  it('turns an entire reviewed merge group into approved restorable deletions', () => {
+    const original = proposed([
+      contact('a', 'Unwanted One', '646-555-0300'),
+      contact('b', 'Unwanted Two', '(646) 555-0300'),
+    ]);
+    const change = original.changes[0];
+    if (change.kind !== 'merge') throw new Error('Expected merge fixture.');
+
+    const result = proposeMergeGroupDeletion({ changeSet: original, changeId: change.id });
+
+    expect(result.changes).toHaveLength(2);
+    expect(result.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'delete', contactId: 'a', decision: 'accepted', origin: 'user' }),
+      expect.objectContaining({ kind: 'delete', contactId: 'b', decision: 'accepted', origin: 'user' }),
+    ]));
     expect(original.changes[0].kind).toBe('merge');
   });
 

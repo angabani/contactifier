@@ -29,3 +29,29 @@ export function proposeContactDeletion(input: {
     } : change),
   });
 }
+
+export function proposeMergeGroupDeletion(input: {
+  readonly changeSet: ChangeSet;
+  readonly changeId: string;
+}): ChangeSet {
+  const target = input.changeSet.changes.find(({ id }) => id === input.changeId);
+  if (!target || target.kind !== 'merge') {
+    throw new Error('Only a reviewed duplicate group can be deleted together.');
+  }
+  const replacements = target.before.map((contact, index) => ({
+    id: `${target.id}:delete-group:${index}`,
+    kind: 'delete' as const,
+    origin: 'user' as const,
+    confidence: createConfidenceScore(1),
+    reasons: ['Entire duplicate group marked as unwanted during review'],
+    decision: 'accepted' as const,
+    contactId: contact.id,
+    before: contact,
+  }));
+
+  return createChangeSet({
+    ...input.changeSet,
+    changes: input.changeSet.changes.flatMap((change) =>
+      change.id === target.id ? replacements : [change]),
+  });
+}
