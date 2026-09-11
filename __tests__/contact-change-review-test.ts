@@ -3,6 +3,7 @@ import {
   carryForwardChangeDecisions,
   createExactDuplicateChangeSet,
   resolveMergeConflict,
+  resolveMergeConflictWithCustomName,
   setChangeDecision,
   summarizeChangeDecisions,
 } from '@/application';
@@ -251,6 +252,27 @@ describe('contact change review', () => {
       resolvedConflictFields: ['name'],
     });
     expect(original.changes[0]).not.toHaveProperty('resolvedConflictFields');
+  });
+
+  it('persists a user-entered name for a conflicting merge', () => {
+    const original = proposed([
+      contact('a', 'Jordan Conflict', '646-555-0300'),
+      contact('b', 'Taylor Conflict', '(646) 555-0300'),
+    ]);
+    const change = original.changes[0];
+    if (change.kind !== 'merge') throw new Error('Expected merge fixture.');
+
+    const resolved = resolveMergeConflictWithCustomName({
+      changeSet: original,
+      changeId: change.id,
+      displayName: '  Jordan Taylor  ',
+    });
+
+    expect(resolved.changes[0]).toMatchObject({
+      kind: 'merge',
+      after: { displayName: 'Jordan Taylor', name: { givenName: 'Jordan Taylor' } },
+      resolvedConflictFields: ['name'],
+    });
   });
 
   it('creates separate proposals for disconnected duplicate groups', () => {

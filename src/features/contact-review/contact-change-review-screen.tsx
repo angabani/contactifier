@@ -15,6 +15,7 @@ import {
   isPerChangeCleanupWorkflow,
   requiresContactConfirmation,
   resolveMergeConflict,
+  resolveMergeConflictWithCustomName,
   decorateProposedContact,
   getCompletedTransactionResultContactId,
   setChangeDecision,
@@ -114,11 +115,13 @@ function ChangeCard({
   change,
   onDecision,
   onResolveConflict,
+  onResolveCustomName,
   onDecorate,
 }: {
   readonly change: ProposedChange;
   readonly onDecision: (decision: ReviewDecision) => void;
   readonly onResolveConflict: (field: MergeConflictField, sourceContactId: string) => void;
+  readonly onResolveCustomName: (displayName: string) => Promise<void>;
   readonly onDecorate: (decoration?: ContactDecoration) => Promise<void>;
 }) {
   const theme = useTheme();
@@ -129,6 +132,9 @@ function ChangeCard({
   const [decorationValue, setDecorationValue] = useState(change.decoration?.value ?? '');
   const [decorationError, setDecorationError] = useState<string | null>(null);
   const [showDecorationEditor, setShowDecorationEditor] = useState(Boolean(change.decoration));
+  const [showCustomName, setShowCustomName] = useState(false);
+  const [customName, setCustomName] = useState('');
+  const [customNameError, setCustomNameError] = useState<string | null>(null);
   const before = change.kind === 'merge' ? change.before : [change.before];
   const after = change.kind === 'delete' ? undefined : change.after;
 
@@ -168,7 +174,7 @@ function ChangeCard({
                 onPress={() => setMergePreviewMode(mode)}
                 style={[styles.previewMode, selected && { backgroundColor: theme.backgroundSelected }]}>
                 <ThemedText type="smallBold" style={selected ? { color: theme.primary } : undefined}>
-                  {mode === 'sources' ? 'Sources' : mode === 'merged' ? 'Merged' : 'Changes'}
+                  {mode === 'sources' ? 'Sources' : mode === 'merged' ? 'Final preview' : 'Changes'}
                 </ThemedText>
               </Pressable>
             );
@@ -199,8 +205,7 @@ function ChangeCard({
 
         {mergePreviewMode === 'merged' && <View style={styles.nativeSection}>
           <View style={styles.sectionHeadingRow}>
-            <ThemedText type="subtitle" themeColor="textSecondary">Merged contact information</ThemedText>
-            <ThemedText type="smallBold" style={{ color: theme.primary }}>All values</ThemedText>
+            <ThemedText type="subtitle" themeColor="textSecondary" style={styles.sectionHeading}>Final contact preview</ThemedText>
           </View>
           <ThemedView type="backgroundElement" style={styles.nativeGroup}>
             {mergedValues.length > 0 ? mergedValues.map((item, index) => (
@@ -264,6 +269,44 @@ function ChangeCard({
                     </Pressable>
                   );
                 })}
+                {conflict.field === 'name' && (
+                  <View style={styles.customNameSection}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => { setShowCustomName((visible) => !visible); setCustomNameError(null); }}
+                      style={styles.customNameToggle}>
+                      <ThemedText type="smallBold" style={{ color: theme.primary }}>Use a different name</ThemedText>
+                    </Pressable>
+                    {showCustomName && <>
+                      <TextInput
+                        accessibilityLabel="Custom contact name"
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                        value={customName}
+                        onChangeText={(value) => { setCustomName(value); setCustomNameError(null); }}
+                        onSubmitEditing={() => {
+                          void onResolveCustomName(customName).catch((error) =>
+                            setCustomNameError(error instanceof Error ? error.message : 'Name could not be applied.'));
+                        }}
+                        placeholder="Enter the final contact name"
+                        placeholderTextColor={theme.textSecondary}
+                        returnKeyType="done"
+                        style={[styles.decorationInput, { color: theme.text, borderColor: theme.backgroundSelected }]}
+                      />
+                      {customNameError && <ThemedText type="small" themeColor="danger">{customNameError}</ThemedText>}
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={!customName.trim()}
+                        onPress={() => void onResolveCustomName(customName).then(() => {
+                          setShowCustomName(false);
+                          setCustomName('');
+                        }).catch((error) => setCustomNameError(error instanceof Error ? error.message : 'Name could not be applied.'))}
+                        style={[styles.decorationApply, { backgroundColor: theme.primary }, !customName.trim() && styles.disabled]}>
+                        <ThemedText type="smallBold" style={styles.selectedDecisionText}>Use this name</ThemedText>
+                      </Pressable>
+                    </>}
+                  </View>
+                )}
               </ThemedView>
             </View>
           ))}
@@ -312,6 +355,16 @@ function ChangeCard({
             </Pressable>}
           </View>
           </>}
+        </View>
+
+        <View style={styles.finalPreviewSection}>
+          <View style={styles.finalPreviewHeading}>
+            <ThemedText type="subtitle">Your contact after merging</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">This is what will be saved</ThemedText>
+          </View>
+          <ThemedView type="backgroundElement" style={styles.finalPreviewCard}>
+            <ContactDetails contact={change.after} />
+          </ThemedView>
         </View>
 
         <View style={styles.mergeActions}>
@@ -592,6 +645,22 @@ function ReadyReview({
     }
   };
 
+  const resolveCustomName = async (changeId: string, displayName: string) => {
+    const next = resolveMergeConflictWithCustomName({ changeSet, changeId, displayName });
+    setIsSaving(true);
+    setSaveError(false);
+    setPlan(null);
+    try {
+      await onReview(next);
+      setChangeSet(next);
+    } catch (error) {
+      setSaveError(true);
+      throw error;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const decorate = async (changeId: string, decoration?: ContactDecoration) => {
     const next = decorateProposedContact({ changeSet, changeId, decoration });
     setPlan(null);
@@ -781,14 +850,6 @@ function ReadyReview({
       contentContainerStyle={styles.listContent}
       ListHeaderComponent={
         <View style={styles.header}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => router.back()}
-            hitSlop={12}>
-            <ThemedText type="smallBold" style={{ color: theme.primary }}>
-              Close
-            </ThemedText>
-          </Pressable>
           <ThemedText type="title" style={styles.title}>
             {currentChange?.kind === 'merge' ? 'Review possible duplicate' : 'Review suggestion'}
           </ThemedText>
@@ -839,6 +900,7 @@ function ReadyReview({
           onResolveConflict={(field, sourceContactId) => {
             if (!isSaving) void resolveConflict(item.id, field, sourceContactId);
           }}
+          onResolveCustomName={(displayName) => resolveCustomName(item.id, displayName)}
           onDecorate={(decoration) => decorate(item.id, decoration)}
           onDecision={(decision) => {
             if (!isSaving) {
@@ -1319,7 +1381,7 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
   },
   card: { padding: Spacing.three, borderRadius: Spacing.three, gap: Spacing.three },
-  mergeCard: { gap: Spacing.four, paddingVertical: Spacing.two },
+  mergeCard: { width: '100%', minWidth: 0, gap: Spacing.four, paddingVertical: Spacing.two },
   mergeHero: { alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.two },
   avatar: { width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontSize: 42, lineHeight: 50, fontWeight: '500' },
@@ -1331,8 +1393,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#E9E9EB',
   },
-  previewMode: { flex: 1, minHeight: 36, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  previewMode: { flex: 1, minWidth: 0, minHeight: 40, paddingHorizontal: Spacing.half, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   sectionHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  sectionHeading: { flex: 1, flexShrink: 1 },
   nativeGroup: { borderRadius: Spacing.three, paddingHorizontal: Spacing.three, overflow: 'hidden' },
   duplicateGroup: { borderRadius: Spacing.three, paddingHorizontal: Spacing.three, overflow: 'hidden' },
   duplicateRow: { minHeight: 76, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
@@ -1340,13 +1403,15 @@ const styles = StyleSheet.create({
   sourceRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
   sourceDetail: { minHeight: 68, paddingVertical: Spacing.three },
   sourceValue: { gap: Spacing.half, paddingTop: Spacing.two },
-  sourceCopy: { flex: 1, gap: Spacing.half },
+  sourceCopy: { flex: 1, minWidth: 0, gap: Spacing.half },
   chevron: { color: '#AEAEB2', fontSize: 32, lineHeight: 34, fontWeight: '300' },
   nativeDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#C7C7CC' },
   mergedValueRow: { minHeight: 66, justifyContent: 'center', gap: Spacing.half, paddingVertical: Spacing.two },
   changeValueRow: { minHeight: 72, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
   conflictSection: { gap: Spacing.two, paddingTop: Spacing.two },
   conflictOption: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
+  customNameSection: { gap: Spacing.two, paddingVertical: Spacing.two, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#C7C7CC' },
+  customNameToggle: { minHeight: 44, justifyContent: 'center' },
   decorationSection: { gap: Spacing.two, paddingTop: Spacing.two },
   decorationKinds: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   decorationKind: { borderWidth: 1, borderRadius: 16, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },
@@ -1354,6 +1419,9 @@ const styles = StyleSheet.create({
   decorationActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   decorationApply: { minHeight: 44, borderRadius: 12, paddingHorizontal: Spacing.three, alignItems: 'center', justifyContent: 'center' },
   mergeActions: { gap: Spacing.one, paddingTop: Spacing.one },
+  finalPreviewSection: { gap: Spacing.two },
+  finalPreviewHeading: { gap: Spacing.half },
+  finalPreviewCard: { padding: Spacing.three, borderRadius: Spacing.three },
   mergePrimaryButton: { minHeight: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   mergeTextButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.three },

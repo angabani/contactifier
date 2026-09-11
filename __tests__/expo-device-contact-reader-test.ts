@@ -118,6 +118,16 @@ describe('Expo device contacts infrastructure', () => {
     expect(result.notes).toEqual([]);
   });
 
+  it('converts Apple localized labels into readable labels', () => {
+    const result = mapExpoContact(expoContact({
+      phones: [{ id: 'phone-1', label: '_$!<Mobile>!$_', number: '+44 1234' }],
+      emails: [{ id: 'email-1', label: '_$!<Work>!$_', address: 'ada@example.com' }],
+    }), { kind: 'device', containerId: 'personal' });
+
+    expect(result.phoneNumbers[0].label).toBe('Mobile');
+    expect(result.emailAddresses[0].label).toBe('Work');
+  });
+
   it('accepts platform-specific collections omitted by the native result', () => {
     const nativeContact = {
       ...expoContact(),

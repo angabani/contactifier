@@ -23,8 +23,15 @@ function valueId(contactId: string, field: string, nativeId: string | undefined,
   return nativeId ?? `${contactId}:${field}:${index}`;
 }
 
+export function normalizeExpoContactLabel(label: string | undefined): string | undefined {
+  const trimmed = label?.trim();
+  if (!trimmed) return undefined;
+  const appleLocalizedLabel = trimmed.match(/^_\$!<(.+)>!\$_$/);
+  return appleLocalizedLabel?.[1]?.trim() || trimmed;
+}
+
 function sourceValue<T>(id: string, value: T, label?: string): ContactValue<T> {
-  return compact({ id, value, label, origin: 'source' as const });
+  return compact({ id, value, label: normalizeExpoContactLabel(label), origin: 'source' as const });
 }
 
 function mapContactDate(input: { readonly year?: number; readonly month: number; readonly day: number }) {
@@ -130,7 +137,7 @@ export function mapExpoContact(
             sourceValue(
               valueId(contact.id, 'event', item.id, index),
               { date, label: item.label },
-              item.label,
+              normalizeExpoContactLabel(item.label),
             ),
           ] : [])
         : [],

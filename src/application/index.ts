@@ -107,7 +107,7 @@ export {
   acceptedConfirmationTypes,
   requiresContactConfirmation,
 } from './use-cases/evaluate-contact-confirmation-policy';
-export { resolveMergeConflict } from './use-cases/resolve-merge-conflict';
+export { resolveMergeConflict, resolveMergeConflictWithCustomName } from './use-cases/resolve-merge-conflict';
 export {
   decorateProposedContact,
   ContactDecorationConflictError,
