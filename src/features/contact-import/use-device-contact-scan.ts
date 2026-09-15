@@ -277,6 +277,7 @@ export function useDeviceContactScan() {
     try {
       await discardCleanupWorkflow.execute(resumableWorkflow.id);
       setResumableWorkflow(null);
+      setResumeError(false);
     } catch {
       setDiscardWorkflowError(true);
     } finally {

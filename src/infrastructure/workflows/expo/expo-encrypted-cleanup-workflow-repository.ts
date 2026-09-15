@@ -131,17 +131,18 @@ export class ExpoEncryptedCleanupWorkflowRepository implements CleanupWorkflowRe
       return Promise.reject(new CleanupWorkflowIntegrityError('Cleanup workflow id is invalid.'));
     }
     const operation = this.mutationQueue.then(async () => {
-      const current = await this.loadCurrent(workflowId);
+      const directory = new Directory(Paths.document, ROOT_DIRECTORY, workflowId);
+      const currentCommit = directory.exists ? await this.currentCommit(directory) : null;
+      const actualRevision = currentCommit?.revision ?? null;
       if (
-        (expectedRevision === null && current !== null) ||
-        (expectedRevision !== null && current?.revision !== expectedRevision)
+        (expectedRevision === null && currentCommit !== null) ||
+        (expectedRevision !== null && actualRevision !== expectedRevision)
       ) {
         throw new CleanupWorkflowConflictError(workflowId, {
           expected: expectedRevision,
-          actual: current?.revision ?? null,
+          actual: actualRevision,
         });
       }
-      const directory = new Directory(Paths.document, ROOT_DIRECTORY, workflowId);
       if (directory.exists) directory.delete();
       await SecureStore.deleteItemAsync(keyAlias(workflowId), keyOptions());
     });

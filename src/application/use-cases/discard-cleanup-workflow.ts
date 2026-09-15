@@ -19,7 +19,24 @@ export class DiscardCleanupWorkflow {
   constructor(private readonly repository: CleanupWorkflowRepository) {}
 
   async execute(workflowId: string): Promise<void> {
-    const workflow = await this.repository.load(workflowId);
+    let workflow;
+    try {
+      workflow = await this.repository.load(workflowId);
+    } catch {
+      const summaries = this.repository.listAll
+        ? await this.repository.listAll()
+        : await this.repository.listResumable();
+      const summary = summaries.find(({ id }) => id === workflowId);
+      if (!summary) {
+        await this.repository.discard(workflowId, null);
+        return;
+      }
+      if (protectedPhases.includes(summary.phase)) {
+        throw new CleanupWorkflowDiscardError('active-operation');
+      }
+      await this.repository.discard(workflowId, summary.revision);
+      return;
+    }
     if (!workflow) {
       await this.repository.discard(workflowId, null);
       return;

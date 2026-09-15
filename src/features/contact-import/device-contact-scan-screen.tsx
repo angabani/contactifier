@@ -365,8 +365,17 @@ export function DeviceContactScanScreen() {
               <View style={[styles.messageCard, { borderColor: theme.danger }]}>
                 <ThemedText type="smallBold">Saved cleanup could not be resumed</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
-                  Its matching encrypted backup or device key is unavailable. Your contacts were not changed.
+                  Its matching encrypted backup or device key is unavailable. Your contacts were not changed. Remove this unavailable cleanup, then run a fresh protected scan.
                 </ThemedText>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isBusy}
+                  onPress={() => void discardResumableWorkflow()}
+                  style={styles.errorRecoveryButton}>
+                  <ThemedText type="smallBold" themeColor="danger">
+                    {isDiscardingWorkflow ? 'Removing…' : 'Remove unavailable cleanup'}
+                  </ThemedText>
+                </Pressable>
               </View>
             )}
 
@@ -749,6 +758,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     paddingLeft: Spacing.three,
   },
+  errorRecoveryButton: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' },
   actionArea: { gap: Spacing.two },
   primaryButton: {
     minHeight: 54,

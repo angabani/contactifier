@@ -236,6 +236,26 @@ describe('cleanup workflow', () => {
     await expect(repository.load('workflow-1')).resolves.toBeNull();
   });
 
+  it('discards unreadable review progress using its non-secret revision metadata', async () => {
+    let discarded: { id: string; revision: number | null } | undefined;
+    const repository: CleanupWorkflowRepository = {
+      load: () => Promise.reject(new Error('Encryption key unavailable')),
+      listResumable: () => Promise.resolve([]),
+      listAll: () => Promise.resolve([{
+        id: 'workflow-1', revision: 3, phase: 'reviewing', createdAt: at, updatedAt: later,
+      }]),
+      discard: (id, revision) => {
+        discarded = { id, revision };
+        return Promise.resolve();
+      },
+      save: () => Promise.reject(new Error('Not used')),
+    };
+
+    await new DiscardCleanupWorkflow(repository).execute('workflow-1');
+
+    expect(discarded).toEqual({ id: 'workflow-1', revision: 3 });
+  });
+
   it('protects workflows that may have an active native operation', async () => {
     const repository = new MemoryWorkflowRepository();
     const initial = workflow();
