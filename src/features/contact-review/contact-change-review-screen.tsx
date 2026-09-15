@@ -411,8 +411,15 @@ function ChangeCard({
             style={[styles.mergePrimaryButton, { backgroundColor: theme.primary }, unresolvedConflictCount > 0 && styles.disabled]}>
             <ThemedText style={styles.selectedDecisionText}>Merge</ThemedText>
           </Pressable>
-          <Pressable accessibilityRole="button" onPress={() => onDecision('rejected')} style={styles.mergeTextButton}>
-            <ThemedText type="smallBold" style={{ color: theme.primary }}>Ignore</ThemedText>
+          <Pressable
+            accessibilityLabel="These are different people. Keep both contacts"
+            accessibilityRole="button"
+            onPress={() => onDecision('rejected')}
+            style={styles.notDuplicatesButton}>
+            <ThemedText type="smallBold" style={{ color: theme.primary }}>These are different people</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.notDuplicatesNote}>
+              Keep both contacts and mark this suggestion as not a match.
+            </ThemedText>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={() => onDecision('skipped')} style={styles.mergeTextButton}>
             <ThemedText type="smallBold" themeColor="textSecondary">Decide later</ThemedText>
@@ -1575,6 +1582,8 @@ const styles = StyleSheet.create({
   finalPreviewCard: { padding: Spacing.three, borderRadius: Spacing.three },
   mergePrimaryButton: { minHeight: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   mergeTextButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  notDuplicatesButton: { minHeight: 60, alignItems: 'center', justifyContent: 'center', gap: Spacing.half, paddingHorizontal: Spacing.two },
+  notDuplicatesNote: { textAlign: 'center' },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.three },
   cardHeading: { flex: 1, gap: Spacing.one },
   comparison: { flexDirection: 'row', gap: Spacing.three },
