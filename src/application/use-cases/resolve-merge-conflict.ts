@@ -37,11 +37,12 @@ export function resolveMergeConflictWithCustomName(input: {
   const displayName = input.displayName.trim().replace(/\s+/g, ' ');
   if (!displayName) throw new Error('Enter a name for the merged contact.');
   const target = input.changeSet.changes.find(({ id }) => id === input.changeId);
-  if (!target || target.kind !== 'merge') throw new Error('Cannot resolve an unknown merge change.');
-  const hasNameConflict = findMergeConflicts(target.before).some(({ field }) => field === 'name');
-  const resolvedConflictFields = hasNameConflict
+  if (!target || target.kind === 'delete') throw new Error('Cannot rename this review suggestion.');
+  const hasNameConflict = target.kind === 'merge' &&
+    findMergeConflicts(target.before).some(({ field }) => field === 'name');
+  const resolvedConflictFields = target.kind === 'merge' && hasNameConflict
     ? Object.freeze([...new Set([...(target.resolvedConflictFields ?? []), 'name' as const])])
-    : target.resolvedConflictFields;
+    : target.kind === 'merge' ? target.resolvedConflictFields : undefined;
   const after = Object.freeze({
     ...target.after,
     displayName,
@@ -50,7 +51,11 @@ export function resolveMergeConflictWithCustomName(input: {
   return Object.freeze({
     ...input.changeSet,
     changes: Object.freeze(input.changeSet.changes.map((change) =>
-      change.id === target.id ? Object.freeze({ ...target, after, resolvedConflictFields }) : change,
+      change.id === target.id
+        ? Object.freeze(target.kind === 'merge'
+          ? { ...target, after, resolvedConflictFields }
+          : { ...target, after })
+        : change,
     )),
   });
 }

@@ -498,6 +498,51 @@ function ChangeCard({
           );
         })}
       </View>
+      {change.kind === 'update' && !showCustomName && (
+        <View style={styles.inlineRenameRow}>
+          <ThemedText type="small" themeColor="textSecondary">Want a different uniform name?</ThemedText>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setCustomName(change.after.displayName);
+              setShowCustomName(true);
+              setCustomNameError(null);
+            }}>
+            <ThemedText type="smallBold" style={{ color: theme.primary }}>Rename</ThemedText>
+          </Pressable>
+        </View>
+      )}
+      {change.kind === 'update' && showCustomName && (
+        <View style={styles.inlineNameEditor}>
+          <TextInput
+            accessibilityLabel="Custom contact name"
+            autoCapitalize="words"
+            autoCorrect={false}
+            value={customName}
+            onChangeText={(value) => { setCustomName(value); setCustomNameError(null); }}
+            placeholder="Enter the contact name"
+            placeholderTextColor={theme.textSecondary}
+            returnKeyType="done"
+            style={[styles.decorationInput, { color: theme.text, borderColor: theme.backgroundSelected }]}
+          />
+          {customNameError && <ThemedText type="small" themeColor="danger">{customNameError}</ThemedText>}
+          <View style={styles.nameEditorActions}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={!customName.trim()}
+              onPress={() => void onResolveCustomName(customName).then(() => {
+                setShowCustomName(false);
+                setCustomName('');
+              }).catch((error) => setCustomNameError(error instanceof Error ? error.message : 'Name could not be applied.'))}
+              style={[styles.decorationApply, { backgroundColor: theme.primary }, !customName.trim() && styles.disabled]}>
+              <ThemedText type="smallBold" style={styles.selectedDecisionText}>Save name</ThemedText>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => { setShowCustomName(false); setCustomNameError(null); }}>
+              <ThemedText type="smallBold" themeColor="textSecondary">Cancel</ThemedText>
+            </Pressable>
+          </View>
+        </View>
+      )}
       {change.kind === 'update' && (
         <Pressable
           accessibilityLabel={`Delete ${change.before.displayName || 'unnamed contact'} instead`}
@@ -1516,6 +1561,8 @@ const styles = StyleSheet.create({
   customNameSection: { gap: Spacing.two, padding: Spacing.three, borderRadius: Spacing.three },
   selectedCustomNameRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three, borderRadius: Spacing.three },
   nameEditorActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  inlineRenameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  inlineNameEditor: { gap: Spacing.two },
   decorationSection: { gap: Spacing.two, paddingTop: Spacing.two },
   decorationKinds: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   decorationKind: { borderWidth: 1, borderRadius: 16, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },

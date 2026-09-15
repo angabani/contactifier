@@ -85,6 +85,27 @@ describe('contact quality analysis', () => {
     });
   });
 
+  it('suggests a reviewable uniform name while preserving normal name punctuation', () => {
+    const current = snapshot([
+      contact('symbols', {
+        displayName: '★ Hemal/M ★',
+        name: { givenName: '★ Hemal/M ★' },
+      }),
+      contact('punctuation', {
+        displayName: "Anne-Marie O’Neill, Jr.",
+        name: { givenName: 'Anne-Marie', familyName: 'O’Neill', suffix: 'Jr.' },
+      }),
+    ]);
+    const result = analyzeContactQuality(current);
+
+    expect(result.findings.find(({ contactId }) => contactId === 'symbols')).toMatchObject({
+      issueKinds: ['name-symbols'],
+      suggestedAction: 'update',
+      after: { displayName: 'Hemal M', name: { givenName: 'Hemal M' } },
+    });
+    expect(result.findings.some(({ contactId }) => contactId === 'punctuation')).toBe(false);
+  });
+
   it('proposes deletion only when every useful field is empty', () => {
     const empty = contact('empty', { displayName: '', name: undefined });
     const withNote = contact('with-note', {

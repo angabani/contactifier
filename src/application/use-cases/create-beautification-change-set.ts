@@ -25,6 +25,7 @@ const reasonLabels = {
   'duplicate-phone': 'Remove repeated phone number',
   'empty-contact': 'Contact has no useful information',
   'missing-name': 'Contact has no name',
+  'name-symbols': 'Make name punctuation consistent',
   whitespace: 'Remove accidental whitespace',
 } as const;
 

@@ -7,6 +7,7 @@ export type ContactQualityIssueKind =
   | 'duplicate-phone'
   | 'empty-contact'
   | 'missing-name'
+  | 'name-symbols'
   | 'whitespace';
 
 export interface ContactQualityFinding {
@@ -48,6 +49,23 @@ function trimmedName(name: StructuredName | undefined): StructuredName | undefin
   );
 }
 
+function uniformNamePart(value: string): string {
+  return value
+    .replace(/[^\p{L}\p{M}\p{N}\s.,'’\-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function uniformName(name: StructuredName | undefined): StructuredName | undefined {
+  if (!name) return undefined;
+  return Object.fromEntries(
+    Object.entries(name).flatMap(([key, value]) => {
+      const cleaned = value ? uniformNamePart(value) : '';
+      return cleaned ? [[key, cleaned]] : [];
+    }),
+  );
+}
+
 function hasName(contact: CanonicalContact): boolean {
   return Boolean(
     contact.displayName.trim() ||
@@ -79,14 +97,21 @@ function analyzeContact(contact: CanonicalContact): ContactQualityFinding | null
   const emailAddresses = deduplicate(contact.emailAddresses, normalizeEmailForExactMatch).map(
     (email) => ({ ...email, value: email.value.trim() }),
   );
-  const name = trimmedName(contact.name);
-  const displayName = contact.displayName.trim();
+  const trimmedStructuredName = trimmedName(contact.name);
+  const name = uniformName(trimmedStructuredName);
+  const trimmedDisplayName = contact.displayName.trim();
+  const displayName = uniformNamePart(trimmedDisplayName);
+
+  if (
+    displayName !== trimmedDisplayName ||
+    JSON.stringify(name) !== JSON.stringify(trimmedStructuredName)
+  ) issueKinds.add('name-symbols');
 
   if (phoneNumbers.length !== contact.phoneNumbers.length) issueKinds.add('duplicate-phone');
   if (emailAddresses.length !== contact.emailAddresses.length) issueKinds.add('duplicate-email');
   if (
-    displayName !== contact.displayName ||
-    JSON.stringify(name) !== JSON.stringify(contact.name) ||
+    trimmedDisplayName !== contact.displayName ||
+    JSON.stringify(trimmedStructuredName) !== JSON.stringify(contact.name) ||
     emailAddresses.some((email, index) => email.value !== contact.emailAddresses[index]?.value)
   ) {
     issueKinds.add('whitespace');
@@ -98,6 +123,7 @@ function analyzeContact(contact: CanonicalContact): ContactQualityFinding | null
   const canUpdate =
     issueKinds.has('duplicate-phone') ||
     issueKinds.has('duplicate-email') ||
+    issueKinds.has('name-symbols') ||
     issueKinds.has('whitespace');
   const after = canUpdate
     ? { ...contact, displayName, name, phoneNumbers, emailAddresses }
