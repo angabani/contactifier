@@ -163,7 +163,7 @@ export function DeviceContactScanScreen() {
       || Constants.appOwnership === AppOwnership.Expo || scanToken !== IOS_SIMULATOR_READ_ONLY_SCAN_TOKEN
     ) return;
     automaticReadOnlyScanStarted.current = true;
-    void scan();
+    void scan({ fullRescan: true });
   }, [scan, scanToken]);
 
   useEffect(() => {
@@ -233,7 +233,7 @@ export function DeviceContactScanScreen() {
             onPress: () => {
               celebrateNextSuccess.current = true;
               void smartMatching.disable();
-              void scan();
+              void scan({ fullRescan: true });
             },
           },
           {
@@ -241,7 +241,7 @@ export function DeviceContactScanScreen() {
             onPress: () => {
               celebrateNextSuccess.current = true;
               void smartMatching.enable();
-              void scan();
+              void scan({ fullRescan: true });
             },
           },
         ],
@@ -249,7 +249,7 @@ export function DeviceContactScanScreen() {
       return;
     }
     celebrateNextSuccess.current = true;
-    void scan();
+    void scan({ fullRescan: true });
   };
 
   return (

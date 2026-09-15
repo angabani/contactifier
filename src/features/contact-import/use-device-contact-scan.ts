@@ -101,7 +101,7 @@ export function useDeviceContactScan() {
     };
   }, []);
 
-  const scan = useCallback(async () => {
+  const scan = useCallback(async ({ fullRescan = false }: { readonly fullRescan?: boolean } = {}) => {
     setState({ status: 'scanning' });
     try {
       const snapshot = await readDeviceContacts.execute({ source: { kind: 'device' } });
@@ -119,7 +119,9 @@ export function useDeviceContactScan() {
             setState({ status: 'backing-up', phase, completedContacts, totalContacts });
           },
         });
-        const focusContactIds = new Set(delta.beautificationContactIds);
+        const focusContactIds = fullRescan
+          ? new Set(snapshot.contacts.map(({ id }) => id))
+          : new Set(delta.beautificationContactIds);
         const focusedSnapshot = {
           ...snapshot,
           contacts: snapshot.contacts.filter(({ id }) => focusContactIds.has(id)),
