@@ -426,6 +426,14 @@ export function DeviceContactScanScreen() {
                   )}
                   <Pressable
                     accessibilityRole="button"
+                    accessibilityLabel="Scan contacts again"
+                    disabled={isBusy}
+                    onPress={startScan}
+                    style={styles.scanAgainButton}>
+                    <ThemedText type="smallBold" style={{ color: theme.primary }}>Scan again</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
                     accessibilityState={{ expanded: showScanDetails }}
                     onPress={() => setShowScanDetails((visible) => !visible)}
                     style={styles.detailsButton}>
@@ -722,6 +730,7 @@ const styles = StyleSheet.create({
   scanSummaryMarkText: { fontSize: 28, lineHeight: 34, fontWeight: '800' },
   scanSummaryCopy: { textAlign: 'center', maxWidth: 520 },
   detailsButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  scanAgainButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   analysisCard: { gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
   analysisHeader: {
     flexDirection: 'row',
