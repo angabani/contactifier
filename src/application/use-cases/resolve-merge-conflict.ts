@@ -38,12 +38,10 @@ export function resolveMergeConflictWithCustomName(input: {
   if (!displayName) throw new Error('Enter a name for the merged contact.');
   const target = input.changeSet.changes.find(({ id }) => id === input.changeId);
   if (!target || target.kind !== 'merge') throw new Error('Cannot resolve an unknown merge change.');
-  if (!findMergeConflicts(target.before).some(({ field }) => field === 'name')) {
-    throw new Error('The merged contact does not have a name conflict.');
-  }
-  const resolvedConflictFields = Object.freeze([
-    ...new Set([...(target.resolvedConflictFields ?? []), 'name' as const]),
-  ]);
+  const hasNameConflict = findMergeConflicts(target.before).some(({ field }) => field === 'name');
+  const resolvedConflictFields = hasNameConflict
+    ? Object.freeze([...new Set([...(target.resolvedConflictFields ?? []), 'name' as const])])
+    : target.resolvedConflictFields;
   const after = Object.freeze({
     ...target.after,
     displayName,

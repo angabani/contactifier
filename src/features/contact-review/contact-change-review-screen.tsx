@@ -154,14 +154,11 @@ function ChangeCard({
     const unresolvedConflictCount = conflicts.filter(
       ({ field }) => !change.resolvedConflictFields?.includes(field),
     ).length;
-    const hasCustomName = Boolean(
-      change.resolvedConflictFields?.includes('name') &&
-      !mergeConflictResultMatchesSource({
+    const hasCustomName = !mergeConflictResultMatchesSource({
         field: 'name',
         result: change.after,
         sources: change.before,
-      }),
-    );
+      });
     return (
       <ThemedView style={styles.mergeCard}>
         <View style={styles.mergeHero}>
@@ -291,68 +288,65 @@ function ChangeCard({
                     </Pressable>
                   );
                 })}
-                {conflict.field === 'name' && (
-                  <View style={styles.customNameSection}>
-                    {hasCustomName && !showCustomName ? (
-                      <View style={styles.selectedCustomNameRow}>
-                        <View style={styles.sourceCopy}>
-                          <ThemedText type="small" themeColor="textSecondary">Selected name</ThemedText>
-                          <ThemedText type="smallBold">{change.after.displayName}</ThemedText>
-                        </View>
-                        <Pressable
-                          accessibilityLabel={`Edit selected name ${change.after.displayName}`}
-                          accessibilityRole="button"
-                          hitSlop={8}
-                          onPress={() => {
-                            setCustomName(change.after.displayName);
-                            setShowCustomName(true);
-                            setCustomNameError(null);
-                          }}>
-                          <ThemedText type="smallBold" style={{ color: theme.primary }}>Edit</ThemedText>
-                        </Pressable>
-                      </View>
-                    ) : !showCustomName ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        onPress={() => { setShowCustomName(true); setCustomNameError(null); }}
-                        style={styles.customNameToggle}>
-                        <ThemedText type="smallBold" style={{ color: theme.primary }}>Use a different name</ThemedText>
-                      </Pressable>
-                    ) : null}
-                    {showCustomName && <>
-                      <TextInput
-                        accessibilityLabel="Custom contact name"
-                        autoCapitalize="words"
-                        autoCorrect={false}
-                        value={customName}
-                        onChangeText={(value) => { setCustomName(value); setCustomNameError(null); }}
-                        onSubmitEditing={() => {
-                          void onResolveCustomName(customName).catch((error) =>
-                            setCustomNameError(error instanceof Error ? error.message : 'Name could not be applied.'));
-                        }}
-                        placeholder="Enter the final contact name"
-                        placeholderTextColor={theme.textSecondary}
-                        returnKeyType="done"
-                        style={[styles.decorationInput, { color: theme.text, borderColor: theme.backgroundSelected }]}
-                      />
-                      {customNameError && <ThemedText type="small" themeColor="danger">{customNameError}</ThemedText>}
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={!customName.trim()}
-                        onPress={() => void onResolveCustomName(customName).then(() => {
-                          setShowCustomName(false);
-                          setCustomName('');
-                        }).catch((error) => setCustomNameError(error instanceof Error ? error.message : 'Name could not be applied.'))}
-                        style={[styles.decorationApply, { backgroundColor: theme.primary }, !customName.trim() && styles.disabled]}>
-                        <ThemedText type="smallBold" style={styles.selectedDecisionText}>Use this name</ThemedText>
-                      </Pressable>
-                    </>}
-                  </View>
-                )}
               </ThemedView>
             </View>
           ))}
         </View>}
+
+        <View style={styles.nameEditorSection}>
+          <ThemedText type="subtitle" themeColor="textSecondary">Contact name</ThemedText>
+          {!showCustomName ? (
+            <ThemedView type="backgroundElement" style={styles.selectedCustomNameRow}>
+              <View style={styles.sourceCopy}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {hasCustomName ? 'Selected name' : 'Name after merging'}
+                </ThemedText>
+                <ThemedText type="smallBold">{change.after.displayName || 'Unnamed contact'}</ThemedText>
+              </View>
+              <Pressable
+                accessibilityLabel={`Rename merged contact ${change.after.displayName || 'unnamed contact'}`}
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => {
+                  setCustomName(change.after.displayName);
+                  setShowCustomName(true);
+                  setCustomNameError(null);
+                }}>
+                <ThemedText type="smallBold" style={{ color: theme.primary }}>
+                  {hasCustomName ? 'Edit' : 'Rename'}
+                </ThemedText>
+              </Pressable>
+            </ThemedView>
+          ) : <ThemedView type="backgroundElement" style={styles.customNameSection}>
+            <TextInput
+              accessibilityLabel="Custom contact name"
+              autoCapitalize="words"
+              autoCorrect={false}
+              value={customName}
+              onChangeText={(value) => { setCustomName(value); setCustomNameError(null); }}
+              placeholder="Enter the final contact name"
+              placeholderTextColor={theme.textSecondary}
+              returnKeyType="done"
+              style={[styles.decorationInput, { color: theme.text, borderColor: theme.backgroundSelected }]}
+            />
+            {customNameError && <ThemedText type="small" themeColor="danger">{customNameError}</ThemedText>}
+            <View style={styles.nameEditorActions}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={!customName.trim()}
+                onPress={() => void onResolveCustomName(customName).then(() => {
+                  setShowCustomName(false);
+                  setCustomName('');
+                }).catch((error) => setCustomNameError(error instanceof Error ? error.message : 'Name could not be applied.'))}
+                style={[styles.decorationApply, { backgroundColor: theme.primary }, !customName.trim() && styles.disabled]}>
+                <ThemedText type="smallBold" style={styles.selectedDecisionText}>Save name</ThemedText>
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={() => { setShowCustomName(false); setCustomNameError(null); }}>
+                <ThemedText type="smallBold" themeColor="textSecondary">Cancel</ThemedText>
+              </Pressable>
+            </View>
+          </ThemedView>}
+        </View>
 
         <View style={styles.decorationSection}>
           <Pressable accessibilityRole="button" onPress={() => setShowDecorationEditor((visible) => !visible)}>
@@ -1518,9 +1512,10 @@ const styles = StyleSheet.create({
   changeValueRow: { minHeight: 72, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
   conflictSection: { gap: Spacing.two, paddingTop: Spacing.two },
   conflictOption: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two },
-  customNameSection: { gap: Spacing.two, paddingVertical: Spacing.two, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#C7C7CC' },
-  customNameToggle: { minHeight: 44, justifyContent: 'center' },
-  selectedCustomNameRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  nameEditorSection: { gap: Spacing.two },
+  customNameSection: { gap: Spacing.two, padding: Spacing.three, borderRadius: Spacing.three },
+  selectedCustomNameRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three, borderRadius: Spacing.three },
+  nameEditorActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   decorationSection: { gap: Spacing.two, paddingTop: Spacing.two },
   decorationKinds: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   decorationKind: { borderWidth: 1, borderRadius: 16, paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },

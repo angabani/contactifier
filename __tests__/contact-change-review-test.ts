@@ -277,6 +277,26 @@ describe('contact change review', () => {
     });
   });
 
+  it('allows renaming a merge even when every duplicate has the same name', () => {
+    const original = proposed([
+      contact('a', 'Same Name', '646-555-0300'),
+      contact('b', 'Same Name', '(646) 555-0300'),
+    ]);
+    const change = original.changes[0];
+    if (change.kind !== 'merge') throw new Error('Expected merge fixture.');
+
+    const resolved = resolveMergeConflictWithCustomName({
+      changeSet: original,
+      changeId: change.id,
+      displayName: 'Better Name',
+    });
+
+    expect(resolved.changes[0]).toMatchObject({
+      kind: 'merge',
+      after: { displayName: 'Better Name', name: { givenName: 'Better Name' } },
+    });
+  });
+
   it('turns a reviewed merge source into an explicit reversible deletion proposal', () => {
     const original = proposed([
       contact('a', 'Useful Contact', '646-555-0300'),
