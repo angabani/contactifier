@@ -262,7 +262,28 @@ export function deterministicContactMatchProbability(matrix: ContactMatchMatrix)
   if (givenName !== null && familyName !== null) score += 0.05 * Math.min(givenName, familyName);
   if (phoneticName !== null) score += 0.06 * phoneticName;
   if (name !== null && name < 0.25) score -= 0.2;
-  return Math.max(0, Math.min(0.99, score));
+  const bounded = Math.max(0, Math.min(0.99, score));
+  return hasContactIdentityConflict(matrix) ? Math.min(0.49, bounded) : bounded;
+}
+
+export function hasSharedPhoneWithDifferentGivenNames(matrix: ContactMatchMatrix): boolean {
+  const score = (kind: ContactMatchFeatureKind) =>
+    matrix.features.find((feature) => feature.kind === kind)?.score ?? null;
+  const givenName = score('givenName');
+  const familyName = score('familyName');
+  return score('phone') === 1 && score('email') !== 1 &&
+    givenName !== null && familyName !== null && givenName < 0.5;
+}
+
+export function hasContactIdentityConflict(matrix: ContactMatchMatrix): boolean {
+  const score = (kind: ContactMatchFeatureKind) =>
+    matrix.features.find((feature) => feature.kind === kind)?.score ?? null;
+  const givenName = score('givenName');
+  const familyName = score('familyName');
+  const hasExactIdentifier = score('phone') === 1 || score('email') === 1;
+  const surnameOnlySimilarity = !hasExactIdentifier && givenName !== null && familyName !== null &&
+    givenName < 0.7;
+  return surnameOnlySimilarity || hasSharedPhoneWithDifferentGivenNames(matrix);
 }
 
 function candidateKeys(contact: CanonicalContact): readonly string[] {
@@ -337,7 +358,10 @@ export async function analyzeContactMatches(
     const rawProbability = options.model
       ? await options.model.score(matrix)
       : deterministicContactMatchProbability(matrix);
-    const probability = Math.max(0, Math.min(0.99, rawProbability));
+    const boundedProbability = Math.max(0, Math.min(0.99, rawProbability));
+    const probability = hasContactIdentityConflict(matrix)
+      ? Math.min(0.49, boundedProbability)
+      : boundedProbability;
     return Object.freeze({
       id: matrix.contactIds.join('\u0000'),
       contactIds: matrix.contactIds,

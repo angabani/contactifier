@@ -168,6 +168,13 @@ describe('contact change review', () => {
     });
   });
 
+  it('does not propose a merge for different given names that only share a phone', () => {
+    const left = { ...contact('a', 'Chinmayee Patel', '919999999999'), name: { givenName: 'Chinmayee', familyName: 'Patel' } };
+    const right = { ...contact('b', 'Chirag Patel', '919999999999'), name: { givenName: 'Chirag', familyName: 'Patel' } };
+
+    expect(proposed([left, right]).changes).toEqual([]);
+  });
+
   it('can merge three contacts when all share the same exact identifier', () => {
     const result = proposed([
       contact('a', 'Ada One', undefined, 'team@example.com'),

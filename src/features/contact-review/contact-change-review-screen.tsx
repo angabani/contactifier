@@ -80,8 +80,11 @@ function changeTitle(change: ProposedChange): string {
 }
 
 function confidenceLabel(change: ProposedChange): string {
-  if (change.origin === 'ml') return change.confidence >= 0.85 ? 'Smart match · Strong evidence' : 'Smart match · Review carefully';
-  if (change.kind === 'merge') return 'Exact match';
+  if (change.kind === 'merge') {
+    const percentage = `${Math.round(change.confidence * 100)}% match`;
+    if (change.confidence >= 0.9) return `${percentage} · Strong evidence`;
+    return `${percentage} · Review carefully`;
+  }
   return 'Safe cleanup suggestion';
 }
 

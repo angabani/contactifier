@@ -65,6 +65,24 @@ describe('contact match matrix', () => {
     expect(matrix.features.find(({ kind }) => kind === 'phoneCountry')?.score).toBeNull();
   });
 
+  it('blocks a shared phone from overriding clearly different given names', async () => {
+    const result = await analyzeContactMatches(snapshot([
+      contact('a', 'Chinmayee Patel', '919999999999'),
+      contact('b', 'Chirag Patel', '919999999999'),
+    ]), { model: { version: 'overconfident-test', score: async () => 0.98 } });
+
+    expect(result.candidates[0]).toMatchObject({ probability: 0.49, band: 'not-suggested' });
+  });
+
+  it('never treats a shared surname as identity evidence', async () => {
+    const result = await analyzeContactMatches(snapshot([
+      contact('a', 'Chinmayee Patel'),
+      contact('b', 'Chirag Patel'),
+    ]), { model: { version: 'overconfident-test', score: async () => 0.98 } });
+
+    expect(result.candidates[0]).toMatchObject({ probability: 0.49, band: 'not-suggested' });
+  });
+
   it('generates bounded candidates and excludes unrelated contacts', async () => {
     const result = await analyzeContactMatches(snapshot([
       contact('a', 'Aarav Khanna', '2125550100'),

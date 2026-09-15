@@ -108,6 +108,8 @@ export type {
 export {
   analyzeContactMatches,
   createContactMatchMatrix,
+  hasContactIdentityConflict,
+  hasSharedPhoneWithDifferentGivenNames,
   deterministicContactMatchProbability,
   DEFAULT_CONTACT_MATCH_PAIR_LIMIT,
 } from './merging/contact-match-matrix';

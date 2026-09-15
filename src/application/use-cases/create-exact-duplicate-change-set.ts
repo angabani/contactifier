@@ -1,6 +1,9 @@
 import {
   createChangeSet,
+  createContactMatchMatrix,
   createConfidenceScore,
+  deterministicContactMatchProbability,
+  hasSharedPhoneWithDifferentGivenNames,
   normalizeEmailForExactMatch,
   normalizePhoneForExactMatch,
   type CanonicalContact,
@@ -137,23 +140,38 @@ export function createExactDuplicateChangeSet({
   createdAt,
 }: CreateExactDuplicateChangeSetInput): ChangeSet {
   const contactsById = new Map(snapshot.contacts.map((contact) => [contact.id, contact]));
-  const proposals: ProposedChange[] = nonOverlappingExactGroups(analysis).map((contactIds) => {
+  const eligibleMatches = analysis.matches.filter(({ contactIds }) => {
+    const left = contactsById.get(contactIds[0]);
+    const right = contactsById.get(contactIds[1]);
+    return Boolean(left && right && !hasSharedPhoneWithDifferentGivenNames(
+      createContactMatchMatrix(left, right),
+    ));
+  });
+  const eligibleAnalysis = { ...analysis, matches: eligibleMatches };
+  const proposals: ProposedChange[] = nonOverlappingExactGroups(eligibleAnalysis).map((contactIds) => {
     const before = contactIds.map((id) => {
       const contact = contactsById.get(id);
       if (!contact) throw new Error(`Duplicate analysis references missing contact ${id}.`);
       return contact;
     });
-    const matches = analysis.matches.filter(({ contactIds: pair }) =>
+    const matches = eligibleMatches.filter(({ contactIds: pair }) =>
       pair.every((id) => contactIds.includes(id)),
     );
     const signalKinds = new Set(
       matches.flatMap(({ signals }) => signals.map(({ kind }) => kind)),
     );
+    const pairProbabilities = matches.map(({ contactIds: pair }) => {
+      const left = contactsById.get(pair[0]);
+      const right = contactsById.get(pair[1]);
+      return left && right
+        ? deterministicContactMatchProbability(createContactMatchMatrix(left, right))
+        : 0;
+    });
     return {
       id: `merge:${contactIds.join(':')}`,
       kind: 'merge',
       origin: 'rule',
-      confidence: createConfidenceScore(signalKinds.size > 1 ? 0.99 : 0.97),
+      confidence: createConfidenceScore(Math.min(...pairProbabilities)),
       reasons: [...signalKinds].sort().map((kind) => `Same exact ${kind}`),
       decision: 'pending',
       contactIds,
